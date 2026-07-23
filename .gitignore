@@ -1,0 +1,73 @@
+# ============================================================
+# R
+# ============================================================
+
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+
+# ============================================================
+# Large R and single-cell objects
+# ============================================================
+
+*.RDS
+*.rda
+*.RData
+*.h5
+*.h5ad
+*.loom
+*.mtx
+*.mtx.gz
+
+# Ignore RDS files by default
+*.rds
+
+# Keep this small curated RDS
+!data/HVG/fibroblasts_historical_HVGs.rds
+
+# ============================================================
+# Sequencing files
+# ============================================================
+
+*.fastq
+*.fastq.gz
+*.fq
+*.fq.gz
+*.bam
+*.bai
+*.sam
+*.cram
+
+# ============================================================
+# Input data not stored in Git
+# ============================================================
+
+data/raw/
+data/barcodes.doublets/
+
+# ============================================================
+# Generated results
+# ============================================================
+
+results/
+plots/
+logs/
+objects/
+output/
+outputs/
+
+# ============================================================
+# Temporary and editor files
+# ============================================================
+
+*.tmp
+*.temp
+*.swp
+*~
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+__pycache__/
+.ipynb_checkpoints/

@@ -1,0 +1,9 @@
+argcomplete @ file:///home/conda/feedstock_root/build_artifacts/argcomplete_1760974912231/work
+nlopt==2.10.0
+numpy @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_numpy_1770098474/work/dist/numpy-2.4.2-cp314-cp314-linux_x86_64.whl#sha256=546a27a76b71cd624e9f06cdae5836392f3f419f0b572072ada4d5057965285e
+PyYAML @ file:///home/conda/feedstock_root/build_artifacts/pyyaml_1770223234623/work
+setuptools==80.10.1
+toml @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_toml_1764486833/work
+tomlkit @ file:///home/conda/feedstock_root/build_artifacts/tomlkit_1768476518220/work
+xmltodict @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_xmltodict_1758191083/work
+yq @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_yq_1749219684/work
