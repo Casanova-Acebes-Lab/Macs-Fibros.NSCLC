@@ -9,6 +9,8 @@ suppressPackageStartupMessages({
   library(Matrix)
   library(cowplot)
   library(ggplot2)
+  library(SingleR)
+  library(celldex)
 })
 
 # ============================================================
@@ -290,13 +292,39 @@ fibroblasts <- RunUMAP(
   verbose = TRUE
 )
 
+
 # ============================================================
-# Save QC object
+# SingleR annotation
+# Used for broad lineage QC and removal of immune contaminants
 # ============================================================
 
-saveRDS(
-  fibroblasts,
-  file = file.path(outdir, "objects/fibroblasts.QC.rds")
-)
+## SingleR Cell identification
+
+
+fibroblasts <- JoinLayers(fibroblasts)
+
+
+sce <- as.SingleCellExperiment(DietSeurat(fibroblasts))
+
+ref <- celldex::ImmGenData()
+
+ref.main <- SingleR(test = sce,assay.type.test = 1,ref = ref,labels = ref$label.main)
+
+ref.fine <- SingleR(test = sce,assay.type.test = 1,ref = ref,labels = ref$label.fine)
+
+
+fibroblasts@meta.data$Cell_type.Image <- ref.main$pruned.labels
+fibroblasts@meta.data$Cell_type.Image.fine <- ref.fine$pruned.labels
+
+
+
+
+fibroblasts@meta.data$Cell_type.Image <- gsub("Endothelial cells.*","Endothelial",
+                            gsub("Epithelial cells.*","Epithelial", 
+                            gsub("NK cells.*","NK",
+                            gsub("Stromal cells.*","Stromal",
+                            gsub("NA.*","Ind",
+                            fibroblasts@meta.data$Cell_type.Image)))))
+
 
 
