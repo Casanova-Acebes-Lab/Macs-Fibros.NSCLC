@@ -1,6 +1,6 @@
 # ============================================================
-# Figure 2E-F
-# Fibroblast trajectory and pseudotime heatmap
+# Figure 2E-G
+# Fibroblast trajectory, pseudotime heatmap and expression heatmaps
 # ============================================================
 
 suppressPackageStartupMessages({
@@ -22,68 +22,50 @@ set.seed(1234)
 # ============================================================
 
 read_config <- function(path = "config.tsv") {
-  x <- readLines(path, warn = FALSE)
-  x <- trimws(x)
+  x <- trimws(readLines(path, warn = FALSE))
   x <- x[nzchar(x) & !startsWith(x, "#")]
-
   parts <- strsplit(x, "[\t=]+")
 
-  keys <- vapply(
-    parts,
-    `[`,
-    character(1),
-    1
-  )
-
+  keys <- vapply(parts, `[`, character(1), 1)
   values <- vapply(
     parts,
     function(z) paste(z[-1], collapse = "="),
     character(1)
   )
 
-  setNames(
-    trimws(values),
-    trimws(keys)
-  )
+  setNames(trimws(values), trimws(keys))
 }
 
 config <- read_config()
-
 rsdir <- unname(config["rsdir"])
 outdir <- unname(config["outdir"])
 
-objects_dir <- file.path(
-  rsdir,
-  "objects"
-)
+objects_dir <- file.path(rsdir, "objects")
+figure_dir <- file.path(outdir, "Figure2")
+table_dir <- file.path(rsdir, "tables", "Figure2")
 
-figure_dir <- file.path(
-  outdir,
-  "Figure2"
-)
-
-table_dir <- file.path(
-  rsdir,
-  "tables",
-  "Figure2"
-)
-
-dir.create(
-  figure_dir,
-  recursive = TRUE,
-  showWarnings = FALSE
-)
-
-dir.create(
-  table_dir,
-  recursive = TRUE,
-  showWarnings = FALSE
-)
+dir.create(figure_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(table_dir, recursive = TRUE, showWarnings = FALSE)
 
 n_cores <- 4L
 
+preorder_cds_file <- file.path(
+  objects_dir,
+  "Figure2_fibroblast_mesothelial_before_ordering.rds"
+)
+
+manual_root_nodes_file <- file.path(
+  table_dir,
+  "Figure2E_manual_root_pr_nodes.txt"
+)
+
+root_selection_summary_file <- file.path(
+  table_dir,
+  "Figure2E_root_selection_used.tsv"
+)
+
 # ============================================================
-# Load final annotated object
+# Load annotated object
 # ============================================================
 
 fibroblasts <- readRDS(
@@ -95,79 +77,71 @@ fibroblasts <- readRDS(
 
 DefaultAssay(fibroblasts) <- "RNA"
 
-# ============================================================
-# Fibroblast subset
-# Mesothelial cells are excluded before Monocle
-# ============================================================
-
 fibro_states <- c(
   "Fibroblasts Universal",
   "Fibroblasts Activated 1",
   "Fibroblasts Activated 2"
 )
 
-metadata <- fibroblasts[[]]
+trajectory_states <- c(
+  fibro_states,
+  "Mesothelial"
+)
 
-cells_keep <- rownames(metadata)[
-  as.character(
-    metadata$Clustering.Mesenchymal
-  ) == "Mesenchymal" &
-    as.character(
-      metadata$Clustering
-    ) %in% fibro_states
+trajectory_colors <- c(
+  "Fibroblasts Universal" = "#FBCDC7",
+  "Fibroblasts Activated 1" = "#F37B79",
+  "Fibroblasts Activated 2" = "#6D1A1A",
+  "Mesothelial" = "#FED579"
+)
+
+fibro_colors <- trajectory_colors[fibro_states]
+
+# ============================================================
+# Build trajectory input with fibroblasts + mesothelial cells
+# ============================================================
+
+meta <- fibroblasts[[]]
+trajectory_cells <- rownames(meta)[
+  as.character(meta$Clustering) %in% trajectory_states
 ]
 
-fibro_subset <- subset(
+trajectory_subset <- subset(
   fibroblasts,
-  cells = cells_keep
+  cells = trajectory_cells
 )
 
-fibro_subset$Clustering <- factor(
-  as.character(
-    fibro_subset$Clustering
-  ),
-  levels = fibro_states
+trajectory_subset$Clustering <- factor(
+  as.character(trajectory_subset$Clustering),
+  levels = trajectory_states
 )
 
-Idents(fibro_subset) <- "Clustering"
-DefaultAssay(fibro_subset) <- "RNA"
+Idents(trajectory_subset) <- "Clustering"
+DefaultAssay(trajectory_subset) <- "RNA"
 
-cat("\nCélulas fibroblásticas utilizadas:\n")
-print(table(fibro_subset$Clustering))
+cat("\nCélulas utilizadas para construir la trayectoria:\n")
+print(table(trajectory_subset$Clustering, useNA = "ifany"))
 
-# ============================================================
-# Existing RNA layers
-# No Seurat renormalization
-# ============================================================
+if (sum(as.character(trajectory_subset$Clustering) == "Mesothelial") == 0) {
+  stop(
+    "No se han incluido células Mesothelial. ",
+    "Revisa la columna Clustering del objeto anotado."
+  )
+}
 
-fibro_subset <- JoinLayers(
-  fibro_subset,
+trajectory_subset <- JoinLayers(
+  trajectory_subset,
   assay = "RNA"
 )
 
 counts_matrix <- GetAssayData(
-  fibro_subset,
+  trajectory_subset,
   assay = "RNA",
   layer = "counts"
 )
 
-normalized_matrix <- GetAssayData(
-  fibro_subset,
-  assay = "RNA",
-  layer = "data"
-)
-
-# ============================================================
-# Create Monocle 3 object
-# ============================================================
-
-cell_metadata <- fibro_subset[[]]
-
-cell_metadata <- cell_metadata[
-  colnames(counts_matrix),
-  ,
-  drop = FALSE
-]
+cell_metadata <- trajectory_subset[[]]
+cell_metadata <- cell_metadata[colnames(counts_matrix), , drop = FALSE]
 
 gene_metadata <- data.frame(
   gene_short_name = rownames(counts_matrix),
@@ -175,459 +149,731 @@ gene_metadata <- data.frame(
   stringsAsFactors = FALSE
 )
 
-state_labels <- c(
-  "Fibroblasts Universal" = "Universal",
-  "Fibroblasts Activated 1" = "Activated fibroblast 1",
-  "Fibroblasts Activated 2" = "Activated fibroblast 2"
-)
-
-cell_metadata$Figure2_state <- factor(
-  unname(
-    state_labels[
-      as.character(
-        cell_metadata$Clustering
-      )
-    ]
-  ),
-  levels = unname(
-    state_labels[
-      fibro_states
-    ]
-  )
-)
-
-cds <- new_cell_data_set(
-  expression_data = counts_matrix,
-  cell_metadata = cell_metadata,
-  gene_metadata = gene_metadata
-)
-
-cds <- estimate_size_factors(cds)
-
-# ============================================================
-# Monocle-specific PCA and UMAP
-# ============================================================
-
-cat("\nEjecutando preprocess_cds...\n")
-
-cds <- preprocess_cds(
-  cds,
-  num_dim = 50
-)
-
-set.seed(1234)
-
-cat("Calculando UMAP de Monocle...\n")
-
-cds <- reduce_dimension(
-  cds,
-  reduction_method = "UMAP",
-  umap.min_dist = 0.4,
-  umap.n_neighbors = 30,
-  cores = n_cores
-)
-
-set.seed(1234)
-
-cds <- cluster_cells(
-  cds,
-  reduction_method = "UMAP",
-  resolution = 1e-2
-)
-
-cat("Aprendiendo principal graph...\n")
-
-cds <- learn_graph(
-  cds,
-  use_partition = TRUE,
-  learn_graph_control = list(
-    minimal_branch_len = 40,
-    prune_graph = FALSE
-  )
-)
-
-# ============================================================
-# Pi16-high Universal fibroblasts as root candidates
-# ============================================================
-
-pi16_values <- as.numeric(
-  normalized_matrix[
-    "Pi16",
-    colnames(cds),
-    drop = TRUE
-  ]
-)
-
-names(pi16_values) <- colnames(cds)
-
-colData(cds)$Pi16_normalized <- pi16_values
-
-universal_cells <- colnames(cds)[
-  as.character(
-    colData(cds)$Clustering
-  ) == "Fibroblasts Universal"
-]
-
-n_root_candidates <- max(
-  20L,
-  ceiling(
-    0.10 * length(universal_cells)
-  )
-)
-
-n_root_candidates <- min(
-  n_root_candidates,
-  length(universal_cells)
-)
-
-universal_pi16 <- sort(
-  pi16_values[
-    universal_cells
-  ],
-  decreasing = TRUE,
-  na.last = NA
-)
-
-root_candidate_cells <- names(
-  head(
-    universal_pi16,
-    n_root_candidates
-  )
-)
-
-colData(cds)$Root_candidate <- factor(
-  ifelse(
-    colnames(cds) %in% root_candidate_cells,
-    "Pi16-high Universal",
-    "Other cells"
-  ),
-  levels = c(
-    "Other cells",
-    "Pi16-high Universal"
-  )
-)
-
-cat(
-  "\nUniversal fibroblasts: ",
-  length(universal_cells),
-  "\nPi16-high root candidates: ",
-  length(root_candidate_cells),
-  "\n",
-  sep = ""
-)
-
-# ============================================================
-# Root-selection diagnostic
-# ============================================================
-
-fibro_colors <- c(
-  "Fibroblasts Universal" = "#FBCDC7",
-  "Fibroblasts Activated 1" = "#F37B79",
-  "Fibroblasts Activated 2" = "#6D1A1A"
-)
-
-p_root_states <- plot_cells(
-  cds,
-  reduction_method = "UMAP",
-  color_cells_by = "Clustering",
-  label_cell_groups = FALSE,
-  label_groups_by_cluster = FALSE,
-  show_trajectory_graph = TRUE,
-  label_branch_points = TRUE,
-  label_leaves = TRUE,
-  label_roots = FALSE,
-  graph_label_size = 2,
-  cell_size = 0.6
-) +
-  scale_color_manual(
-    values = fibro_colors
-  ) +
-  labs(
-    title = "Fibroblast states",
-    x = "UMAP1",
-    y = "UMAP2"
+if (file.exists(preorder_cds_file)) {
+  cat(
+    "\nReutilizando el CDS previo a order_cells:\n",
+    preorder_cds_file,
+    "\n",
+    sep = ""
   )
 
-p_root_pi16 <- plot_cells(
-  cds,
-  reduction_method = "UMAP",
-  color_cells_by = "Pi16_normalized",
-  label_cell_groups = FALSE,
-  label_groups_by_cluster = FALSE,
-  show_trajectory_graph = TRUE,
-  label_branch_points = TRUE,
-  label_leaves = TRUE,
-  label_roots = FALSE,
-  graph_label_size = 2,
-  cell_size = 0.6
-) +
-  scale_color_viridis_c(
-    option = "magma",
-    name = "Pi16"
-  ) +
-  labs(
-    title = "Pi16 expression",
-    x = "UMAP1",
-    y = "UMAP2"
+  cds_all <- readRDS(preorder_cds_file)
+
+} else {
+  cds_all <- new_cell_data_set(
+    expression_data = counts_matrix,
+    cell_metadata = cell_metadata,
+    gene_metadata = gene_metadata
   )
 
-p_root_candidates <- plot_cells(
-  cds,
-  reduction_method = "UMAP",
-  color_cells_by = "Root_candidate",
-  label_cell_groups = FALSE,
-  label_groups_by_cluster = FALSE,
-  show_trajectory_graph = TRUE,
-  label_branch_points = TRUE,
-  label_leaves = TRUE,
-  label_roots = FALSE,
-  graph_label_size = 2,
-  cell_size = 0.6
-) +
-  scale_color_manual(
-    values = c(
-      "Other cells" = "grey85",
-      "Pi16-high Universal" = "#0072B2"
+  cds_all <- estimate_size_factors(cds_all)
+
+  # ==========================================================
+  # Monocle PCA, UMAP, clustering and principal graph
+  # Fibroblasts and mesothelial cells remain present
+  # ==========================================================
+
+  cat("\nEjecutando preprocess_cds...\n")
+  cds_all <- preprocess_cds(
+    cds_all,
+    num_dim = 50
+  )
+
+  set.seed(1234)
+  cat("Calculando UMAP de Monocle...\n")
+  cds_all <- reduce_dimension(
+    cds_all,
+    reduction_method = "UMAP",
+    umap.min_dist = 0.4,
+    umap.n_neighbors = 30,
+    cores = 1L
+  )
+
+  set.seed(1234)
+  cds_all <- cluster_cells(
+    cds_all,
+    reduction_method = "UMAP",
+    resolution = 1e-2
+  )
+
+  cat("Aprendiendo principal graph...\n")
+  cds_all <- learn_graph(
+    cds_all,
+    use_partition = TRUE,
+    learn_graph_control = list(
+      minimal_branch_len = 40,
+      prune_graph = FALSE
     )
-  ) +
-  labs(
-    title = "Proposed root cells",
-    x = "UMAP1",
-    y = "UMAP2"
   )
 
-Figure2E_root_diagnostic <-
-  p_root_states +
-  p_root_pi16 +
-  p_root_candidates +
-  plot_layout(
-    ncol = 3
+  saveRDS(cds_all, preorder_cds_file)
+  cat(
+    "CDS previo a order_cells guardado en: ",
+    preorder_cds_file,
+    "\n",
+    sep = ""
   )
-
-ggsave(
-  filename = file.path(
-    figure_dir,
-    "Figure2E_root_selection_diagnostic.pdf"
-  ),
-  plot = Figure2E_root_diagnostic,
-  width = 12,
-  height = 4,
-  units = "in"
-)
-
-ggsave(
-  filename = file.path(
-    figure_dir,
-    "Figure2E_root_selection_diagnostic.png"
-  ),
-  plot = Figure2E_root_diagnostic,
-  width = 12,
-  height = 4,
-  units = "in",
-  dpi = 300
-)
-
-# ============================================================
-# Map Pi16-high cells to the principal graph
-# ============================================================
-
-closest_vertex <-
-  cds@principal_graph_aux[["UMAP"]]$
-  pr_graph_cell_proj_closest_vertex
-
-closest_vertex <- as.matrix(
-  closest_vertex
-)
-
-if (is.null(rownames(closest_vertex))) {
-  rownames(closest_vertex) <- colnames(cds)
 }
 
-closest_vertex <- closest_vertex[
-  colnames(cds),
-  ,
-  drop = FALSE
-]
+cat("\nPoblaciones presentes en el CDS usado para seleccionar el root:\n")
+print(table(colData(cds_all)$Clustering, useNA = "ifany"))
 
-candidate_vertices <- as.character(
-  closest_vertex[
-    root_candidate_cells,
-    1
-  ]
-)
-
-dominant_vertex <- names(
-  sort(
-    table(candidate_vertices),
-    decreasing = TRUE
+if (sum(as.character(colData(cds_all)$Clustering) == "Mesothelial") == 0) {
+  stop(
+    "El CDS previo a order_cells no contiene células Mesothelial. ",
+    "Borra el RDS previo y vuelve a ejecutar el script."
   )
-)[1]
+}
 
 graph_vertex_names <- igraph::V(
-  principal_graph(cds)[["UMAP"]]
+  principal_graph(cds_all)[["UMAP"]]
 )$name
 
-if (dominant_vertex %in% graph_vertex_names) {
-  root_principal_node <- dominant_vertex
-} else {
-  root_principal_node <- graph_vertex_names[
-    as.integer(dominant_vertex)
-  ]
+# ============================================================
+# Root selection and pseudotime
+# ============================================================
+
+if (!file.exists(manual_root_nodes_file)) {
+  cat(
+    "\nEl grafo con fibroblastos y mesoteliales ya está preparado.\n",
+    "No existe todavía una selección manual del nodo raíz.\n\n",
+    "Genera ahora el mapa estático de nodos:\n",
+    "  Rscript R/09_Figure2_select_root_static.R\n\n",
+    "Después de mirar el PNG, guarda el root con, por ejemplo:\n",
+    "  Rscript R/09_Figure2_select_root_static.R Y_17\n\n",
+    "Finalmente vuelve a ejecutar:\n",
+    "  Rscript R/09_Figure2.R\n",
+    sep = ""
+  )
+
+  quit(
+    save = "no",
+    status = 0
+  )
 }
 
-cat(
-  "\nNodo raíz seleccionado: ",
-  root_principal_node,
-  "\n",
-  sep = ""
-)
-
-# ============================================================
-# Calculate pseudotime
-# ============================================================
-
-cds <- order_cells(
-  cds,
-  reduction_method = "UMAP",
-  root_pr_nodes = root_principal_node
-)
-
-pseudotime_values <- pseudotime(
-  cds,
-  reduction_method = "UMAP"
-)
-
-names(pseudotime_values) <- colnames(cds)
-
-colData(cds)$monocle3_pseudotime <-
-  pseudotime_values
-
-cat(
-  "Células con pseudotime infinito: ",
-  sum(
-    !is.finite(
-      pseudotime_values
-    )
-  ),
-  "\n",
-  sep = ""
-)
-
-suppressWarnings(
-  saveRDS(
-    cds,
-    file.path(
-      objects_dir,
-      "Figure2_fibroblast_monocle3_cds.rds"
+root_nodes_used <- unique(
+  trimws(
+    readLines(
+      manual_root_nodes_file,
+      warn = FALSE
     )
   )
 )
+root_nodes_used <- root_nodes_used[nzchar(root_nodes_used)]
 
+if (length(root_nodes_used) == 0) {
+  stop(
+    "El archivo de nodos raíz está vacío: ",
+    manual_root_nodes_file
+  )
+}
 
+invalid_nodes <- setdiff(root_nodes_used, graph_vertex_names)
+if (length(invalid_nodes) > 0) {
+  stop(
+    "Los nodos manuales no existen en el grafo actual: ",
+    paste(invalid_nodes, collapse = ", "),
+    ". Borra la selección anterior y ejecuta de nuevo ",
+    "R/09_Figure2_select_root_static.R."
+  )
+}
 
-# ============================================================
-# Figure 2E
-# Fibroblast states and pseudotime
-# ============================================================
+root_selection_method <- "Saved manual principal nodes"
 
-fibro_colors <- c(
-  "Fibroblasts Universal" = "#FBCDC7",
-  "Fibroblasts Activated 1" = "#F37B79",
-  "Fibroblasts Activated 2" = "#6D1A1A"
+cds_all <- order_cells(
+  cds_all,
+  reduction_method = "UMAP",
+  root_pr_nodes = root_nodes_used
+)
+
+pseudotime_all <- pseudotime(
+  cds_all,
+  reduction_method = "UMAP"
+)
+names(pseudotime_all) <- colnames(cds_all)
+colData(cds_all)$monocle3_pseudotime <- pseudotime_all
+
+cat(
+  "\nMétodo de selección del root: ", root_selection_method,
+  "\nRoot node(s): ", paste(root_nodes_used, collapse = ", "),
+  "\nCélulas con pseudotime infinito: ",
+  sum(!is.finite(pseudotime_all)),
+  "\n",
+  sep = ""
+)
+
+write.table(
+  data.frame(
+    Selection_method = root_selection_method,
+    Root_pr_node = root_nodes_used,
+    stringsAsFactors = FALSE
+  ),
+  root_selection_summary_file,
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+
+saveRDS(
+  cds_all,
+  file.path(
+    objects_dir,
+    "Figure2_fibroblast_mesothelial_monocle3_cds.rds"
+  )
 )
 
 # ============================================================
-# Copy Monocle UMAP to Seurat
+# Remove mesothelial cells only after root selection, order_cells()
+# and pseudotime calculation have been completed with all four states.
+# No dimensional reduction, graph learning or ordering is repeated.
 # ============================================================
 
-monocle_umap <- SingleCellExperiment::reducedDim(
-  cds,
+# cds_all retains the complete trajectory used for:
+# - PCA and UMAP
+# - principal graph
+# - manual root-node selection
+# - order_cells()
+# - pseudotime calculation
+
+fibro_cells <- colnames(cds_all)[
+  as.character(colData(cds_all)$Clustering) %in% fibro_states
+]
+
+# Monocle object used only for the final fibroblast figures and analyses.
+# It inherits the UMAP, principal graph and pseudotime from cds_all.
+cds_fibro <- cds_all[, fibro_cells]
+
+pseudotime_fibro_raw <- pseudotime_all[fibro_cells]
+names(pseudotime_fibro_raw) <- fibro_cells
+
+# Rescale fibroblast pseudotime to a fixed 0-20 range.
+# This changes only the numerical display scale, not cell ordering.
+finite_pseudotime <- is.finite(pseudotime_fibro_raw)
+
+if (!any(finite_pseudotime)) {
+  stop("No hay células de fibroblastos con pseudotime finito.")
+}
+
+pseudotime_limits_raw <- range(
+  pseudotime_fibro_raw[finite_pseudotime],
+  finite = TRUE
+)
+
+if (diff(pseudotime_limits_raw) == 0) {
+  stop("El pseudotime de fibroblastos no presenta variación.")
+}
+
+pseudotime_fibro <- rep(
+  Inf,
+  length(pseudotime_fibro_raw)
+)
+
+names(pseudotime_fibro) <- fibro_cells
+
+pseudotime_fibro[finite_pseudotime] <- (
+  pseudotime_fibro_raw[finite_pseudotime] -
+    pseudotime_limits_raw[1]
+) / diff(pseudotime_limits_raw) * 20
+
+colData(cds_fibro)$monocle3_pseudotime_raw <-
+  pseudotime_fibro_raw
+
+colData(cds_fibro)$monocle3_pseudotime <-
+  pseudotime_fibro
+
+saveRDS(
+  cds_fibro,
+  file.path(
+    objects_dir,
+    "Figure2_fibroblast_monocle3_cds.rds"
+  )
+)
+
+fibro_subset_plot <- subset(
+  trajectory_subset,
+  cells = fibro_cells
+)
+
+fibro_subset_plot$Clustering <- factor(
+  as.character(fibro_subset_plot$Clustering),
+  levels = fibro_states
+)
+
+Idents(fibro_subset_plot) <- "Clustering"
+
+cat("\nCélulas usadas para calcular el pseudotime:\n")
+print(table(colData(cds_all)$Clustering, useNA = "ifany"))
+
+cat("\nCélulas conservadas para Figure 2E-F:\n")
+print(table(colData(cds_fibro)$Clustering, useNA = "ifany"))
+
+if (any(as.character(colData(cds_fibro)$Clustering) == "Mesothelial")) {
+  stop("Mesothelial sigue presente en el CDS final de Figure 2E-F.")
+}
+
+# ============================================================
+# Figure 2E: fibroblast states and fibroblast pseudotime
+#
+# The UMAP, principal graph, manual root selection and pseudotime
+# were calculated with fibroblasts + mesothelial cells.
+# For the final figure, only fibroblast cells and the graph branches
+# needed to connect fibroblast-associated principal points are shown.
+# ============================================================
+
+# Adjustable dimensions for Figure 2E.
+# Because coord_cartesian() is used instead of coord_fixed(), increasing
+# Figure 2E: tamaño final y anchura relativa de los dos paneles.
+# coord_fixed(ratio = 1) conserva la geometría original del UMAP.
+figure2e_width <- 11.5
+figure2e_height <- 5.2
+figure2e_panel_widths <- c(1, 1)
+
+# ------------------------------------------------------------
+# Monocle UMAP coordinates and fibroblast plotting table
+# ------------------------------------------------------------
+
+monocle_umap_all <- SingleCellExperiment::reducedDim(
+  cds_all,
   "UMAP"
 )
 
-rownames(monocle_umap) <- colnames(cds)
+rownames(monocle_umap_all) <- colnames(cds_all)
+colnames(monocle_umap_all) <- c("UMAP1", "UMAP2")
 
-monocle_umap <- monocle_umap[
-  colnames(fibro_subset),
+fibro_pseudotime_table <- data.frame(
+  Cell = fibro_cells,
+  UMAP1 = monocle_umap_all[fibro_cells, "UMAP1"],
+  UMAP2 = monocle_umap_all[fibro_cells, "UMAP2"],
+  Clustering = factor(
+    as.character(colData(cds_all)[fibro_cells, "Clustering"]),
+    levels = fibro_states
+  ),
+  Pseudotime_raw = as.numeric(
+    pseudotime_fibro_raw[fibro_cells]
+  ),
+  Pseudotime = as.numeric(
+    pseudotime_fibro[fibro_cells]
+  ),
+  stringsAsFactors = FALSE
+)
+
+fibro_pseudotime_table$Pseudotime_raw[
+  !is.finite(fibro_pseudotime_table$Pseudotime_raw)
+] <- NA_real_
+
+fibro_pseudotime_table$Pseudotime[
+  !is.finite(fibro_pseudotime_table$Pseudotime)
+] <- NA_real_
+
+# ------------------------------------------------------------
+# Build a fibroblast-only graph for plotting
+#
+# No UMAP, principal graph, root selection or pseudotime is recalculated.
+# We only remove graph branches supported exclusively by mesothelial cells.
+# ------------------------------------------------------------
+
+principal_graph_all <- principal_graph(cds_all)[["UMAP"]]
+principal_graph_aux_all <- principal_graph_aux(cds_all)[["UMAP"]]
+
+graph_vertex_names <- igraph::V(principal_graph_all)$name
+
+closest_vertex_raw <-
+  principal_graph_aux_all$pr_graph_cell_proj_closest_vertex
+
+if (is.matrix(closest_vertex_raw) ||
+    is.data.frame(closest_vertex_raw)) {
+
+  closest_vertex <- closest_vertex_raw[, 1]
+
+  if (!is.null(rownames(closest_vertex_raw))) {
+    names(closest_vertex) <- rownames(closest_vertex_raw)
+  }
+
+} else {
+  closest_vertex <- closest_vertex_raw
+}
+
+if (is.null(names(closest_vertex))) {
+  stop(
+    "pr_graph_cell_proj_closest_vertex no contiene nombres de células."
+  )
+}
+
+closest_vertex_names <- names(closest_vertex)
+closest_vertex_character <- as.character(closest_vertex)
+numeric_vertex_indices <- suppressWarnings(
+  as.integer(closest_vertex_character)
+)
+
+# Depending on the Monocle3 version, vertices may be stored as Y_* names
+# or as numeric indices.
+if (
+  all(
+    is.na(closest_vertex_character) |
+      !is.na(numeric_vertex_indices)
+  )
+) {
+
+  valid_index <- !is.na(numeric_vertex_indices) &
+    numeric_vertex_indices >= 1 &
+    numeric_vertex_indices <= length(graph_vertex_names)
+
+  converted_vertices <- rep(
+    NA_character_,
+    length(numeric_vertex_indices)
+  )
+
+  converted_vertices[valid_index] <-
+    graph_vertex_names[numeric_vertex_indices[valid_index]]
+
+  closest_vertex <- converted_vertices
+
+} else {
+  closest_vertex <- closest_vertex_character
+}
+
+names(closest_vertex) <- closest_vertex_names
+
+mapped_fibro_cells <- intersect(
+  fibro_cells,
+  names(closest_vertex)
+)
+
+fibro_principal_vertices <- unique(
+  closest_vertex[mapped_fibro_cells]
+)
+
+fibro_principal_vertices <- fibro_principal_vertices[
+  !is.na(fibro_principal_vertices) &
+    fibro_principal_vertices %in% graph_vertex_names
+]
+
+if (length(fibro_principal_vertices) < 2) {
+  stop(
+    "No se identificaron suficientes principal points asociados ",
+    "a fibroblastos para dibujar la trayectoria."
+  )
+}
+
+# Keep the minimal set of paths connecting fibroblast-associated nodes
+# within each connected component. This removes the mesothelial-only arm.
+graph_components <- igraph::components(
+  principal_graph_all
+)$membership
+names(graph_components) <- graph_vertex_names
+
+fibro_component_ids <- unique(
+  graph_components[fibro_principal_vertices]
+)
+
+fibro_graph_vertices <- character(0)
+
+for (current_component in fibro_component_ids) {
+
+  current_targets <- fibro_principal_vertices[
+    graph_components[fibro_principal_vertices] ==
+      current_component
+  ]
+
+  current_targets <- unique(current_targets)
+
+  if (length(current_targets) == 1) {
+    fibro_graph_vertices <- union(
+      fibro_graph_vertices,
+      current_targets
+    )
+  } else {
+    reference_vertex <- current_targets[1]
+
+    fibro_graph_vertices <- union(
+      fibro_graph_vertices,
+      reference_vertex
+    )
+
+    for (target_vertex in current_targets[-1]) {
+      current_path <- igraph::shortest_paths(
+        principal_graph_all,
+        from = reference_vertex,
+        to = target_vertex,
+        output = "vpath"
+      )$vpath[[1]]
+
+      fibro_graph_vertices <- union(
+        fibro_graph_vertices,
+        igraph::as_ids(current_path)
+      )
+    }
+  }
+}
+
+principal_graph_fibro_plot <- igraph::induced_subgraph(
+  principal_graph_all,
+  vids = unique(fibro_graph_vertices)
+)
+
+# ------------------------------------------------------------
+# Principal-point coordinates and graph segments
+# ------------------------------------------------------------
+
+dp_mst <- principal_graph_aux_all$dp_mst
+
+if (
+  nrow(dp_mst) == 2 &&
+    ncol(dp_mst) == length(graph_vertex_names)
+) {
+  principal_point_coordinates <- t(dp_mst)
+
+  if (!is.null(colnames(dp_mst))) {
+    rownames(principal_point_coordinates) <- colnames(dp_mst)
+  }
+
+} else if (
+  ncol(dp_mst) == 2 &&
+    nrow(dp_mst) == length(graph_vertex_names)
+) {
+  principal_point_coordinates <- dp_mst
+
+} else {
+  stop(
+    "No se reconoce la estructura de coordenadas de dp_mst."
+  )
+}
+
+if (is.null(rownames(principal_point_coordinates))) {
+  rownames(principal_point_coordinates) <- graph_vertex_names
+}
+
+colnames(principal_point_coordinates)[1:2] <- c(
+  "UMAP1",
+  "UMAP2"
+)
+
+missing_graph_coordinates <- setdiff(
+  igraph::V(principal_graph_fibro_plot)$name,
+  rownames(principal_point_coordinates)
+)
+
+if (length(missing_graph_coordinates) > 0) {
+  stop(
+    "Faltan coordenadas para estos principal points: ",
+    paste(missing_graph_coordinates, collapse = ", ")
+  )
+}
+
+fibro_graph_edges <- igraph::as_data_frame(
+  principal_graph_fibro_plot,
+  what = "edges"
+)
+
+fibro_graph_segments <- data.frame(
+  x = principal_point_coordinates[
+    fibro_graph_edges$from,
+    "UMAP1"
+  ],
+  y = principal_point_coordinates[
+    fibro_graph_edges$from,
+    "UMAP2"
+  ],
+  xend = principal_point_coordinates[
+    fibro_graph_edges$to,
+    "UMAP1"
+  ],
+  yend = principal_point_coordinates[
+    fibro_graph_edges$to,
+    "UMAP2"
+  ],
+  stringsAsFactors = FALSE
+)
+
+fibro_graph_segments <- fibro_graph_segments[
+  complete.cases(fibro_graph_segments),
   ,
   drop = FALSE
 ]
 
-colnames(monocle_umap) <- c(
-  "mUMAP_1",
-  "mUMAP_2"
+# ------------------------------------------------------------
+# Common coordinate limits for both panels
+# ------------------------------------------------------------
+
+common_xlim <- range(
+  c(
+    fibro_pseudotime_table$UMAP1,
+    fibro_graph_segments$x,
+    fibro_graph_segments$xend
+  ),
+  finite = TRUE
 )
 
-fibro_subset[["monocle_umap"]] <- CreateDimReducObject(
-  embeddings = monocle_umap,
-  key = "mUMAP_",
-  assay = "RNA"
+common_ylim <- range(
+  c(
+    fibro_pseudotime_table$UMAP2,
+    fibro_graph_segments$y,
+    fibro_graph_segments$yend
+  ),
+  finite = TRUE
 )
 
-# ============================================================
-# Left panel: clustering without trajectories
-# ============================================================
+add_plot_padding <- function(x, fraction = 0.035) {
+  span <- diff(x)
 
-Figure2E_clusters <- DimPlot(
-  object = fibro_subset,
-  reduction = "monocle_umap",
-  group.by = "Clustering",
-  cols = fibro_colors,
-  pt.size = 0.7,
-  raster = FALSE
+  if (!is.finite(span) || span == 0) {
+    span <- 1
+  }
+
+  x + c(-1, 1) * span * fraction
+}
+
+common_xlim <- add_plot_padding(common_xlim)
+common_ylim <- add_plot_padding(common_ylim)
+
+# ------------------------------------------------------------
+# Left panel: fibroblast states
+# ------------------------------------------------------------
+
+Figure2E_clusters <- ggplot(
+  fibro_pseudotime_table,
+  aes(
+    x = UMAP1,
+    y = UMAP2,
+    color = Clustering
+  )
 ) +
+  geom_point(
+    size = 0.8,
+    alpha = 1
+  ) +
+  scale_color_manual(
+    values = fibro_colors,
+    breaks = fibro_states,
+    drop = FALSE,
+    name = NULL
+  ) +
+  guides(
+    color = guide_legend(
+      direction = "vertical",
+      ncol = 1,
+      byrow = TRUE,
+      override.aes = list(
+        size = 2.2,
+        alpha = 1
+      )
+    )
+  ) +
   labs(
     title = "Fibroblast states",
     x = "UMAP1",
-    y = "UMAP2",
-    color = NULL
+    y = "UMAP2"
   ) +
-  theme_classic() +
+  coord_fixed(
+    xlim = common_xlim,
+    ylim = common_ylim,
+    ratio = 1,
+    clip = "off"
+  ) +
+  theme_classic(base_size = 12) +
   theme(
-    aspect.ratio = 1,
-    legend.title = element_blank()
+    plot.title = element_text(
+      hjust = 0.5,
+      face = "bold"
+    ),
+    legend.position = "right",
+    legend.justification = "center",
+    legend.direction = "vertical",
+    legend.box = "vertical",
+    legend.margin = margin(
+      t = 0,
+      r = 0,
+      b = 0,
+      l = 4
+    ),
+    plot.margin = margin(5.5, 5.5, 5.5, 5.5)
   )
 
-# ============================================================
-# Right panel: pseudotime with trajectories
-# ============================================================
+# ------------------------------------------------------------
+# Right panel: fibroblast pseudotime
+# ------------------------------------------------------------
 
-Figure2E_pseudotime <- plot_cells(
-  cds,
-  reduction_method = "UMAP",
-  color_cells_by = "pseudotime",
-  label_cell_groups = FALSE,
-  label_groups_by_cluster = FALSE,
-  show_trajectory_graph = TRUE,
-  trajectory_graph_color = "black",
-  trajectory_graph_segment_size = 0.6,
-  label_branch_points = FALSE,
-  label_roots = FALSE,
-  label_leaves = FALSE,
-  cell_size = 0.7
+Figure2E_pseudotime <- ggplot(
+  fibro_pseudotime_table,
+  aes(
+    x = UMAP1,
+    y = UMAP2
+  )
 ) +
+  geom_segment(
+    data = fibro_graph_segments,
+    aes(
+      x = x,
+      y = y,
+      xend = xend,
+      yend = yend
+    ),
+    inherit.aes = FALSE,
+    color = "black",
+    linewidth = 0.6,
+    lineend = "round"
+  ) +
+  geom_point(
+    aes(color = Pseudotime),
+    size = 0.8,
+    alpha = 1
+  ) +
   scale_color_viridis_c(
     option = "plasma",
-    name = "Pseudotime"
+    name = "Pseudotime",
+    limits = c(0, 20),
+    breaks = seq(0, 20, by = 5),
+    na.value = "grey80"
+  ) +
+  guides(
+    color = guide_colorbar(
+      direction = "vertical",
+      title.position = "top",
+      title.hjust = 0.5,
+      barwidth = unit(3, "mm"),
+      barheight = unit(38, "mm")
+    )
   ) +
   labs(
     title = "Pseudotime",
     x = "UMAP1",
     y = "UMAP2"
   ) +
-  theme_classic() +
+  coord_fixed(
+    xlim = common_xlim,
+    ylim = common_ylim,
+    ratio = 1,
+    clip = "off"
+  ) +
+  theme_classic(base_size = 12) +
   theme(
-    aspect.ratio = 1
+    plot.title = element_text(
+      hjust = 0.5,
+      face = "bold"
+    ),
+    legend.position = "right",
+    legend.justification = "center",
+    legend.direction = "vertical",
+    legend.box = "vertical",
+    legend.margin = margin(
+      t = 0,
+      r = 0,
+      b = 0,
+      l = 4
+    ),
+    plot.margin = margin(5.5, 5.5, 5.5, 7)
   )
 
-# ============================================================
-# Combined figure
-# ============================================================
+# ------------------------------------------------------------
+# Combine and save
+# ------------------------------------------------------------
 
 Figure2E <- Figure2E_clusters + Figure2E_pseudotime +
   plot_layout(
     ncol = 2,
-    widths = c(1, 1)
+    widths = figure2e_panel_widths,
+    guides = "keep"
   )
 
 ggsave(
@@ -636,10 +882,11 @@ ggsave(
     "Figure2E_fibroblast_states_pseudotime.pdf"
   ),
   plot = Figure2E,
-  width = 9,
-  height = 4.2,
+  width = figure2e_width,
+  height = figure2e_height,
   units = "in",
-  useDingbats = FALSE
+  useDingbats = FALSE,
+  limitsize = FALSE
 )
 
 ggsave(
@@ -648,34 +895,28 @@ ggsave(
     "Figure2E_fibroblast_states_pseudotime.png"
   ),
   plot = Figure2E,
-  width = 9,
-  height = 4.2,
+  width = figure2e_width,
+  height = figure2e_height,
   units = "in",
-  dpi = 300
+  dpi = 300,
+  limitsize = FALSE
 )
 
-# ============================================================
-# Figure 2E source table
-# ============================================================
-
-figure2e_cells <- colnames(cds)
-
-Figure2E_table <- data.frame(
-  Cell = figure2e_cells,
-  UMAP1 = monocle_umap[figure2e_cells, 1],
-  UMAP2 = monocle_umap[figure2e_cells, 2],
-  Clustering = as.character(
-    colData(cds)$Clustering
-  ),
-  Pseudotime = monocle3::pseudotime(cds)[
-    figure2e_cells
-  ],
-  stringsAsFactors = FALSE
-)
+Figure2E_table <- fibro_pseudotime_table[
+  ,
+  c(
+    "Cell",
+    "UMAP1",
+    "UMAP2",
+    "Clustering",
+    "Pseudotime_raw",
+    "Pseudotime"
+  )
+]
 
 write.table(
   Figure2E_table,
-  file = file.path(
+  file.path(
     table_dir,
     "Figure2E_fibroblast_states_pseudotime.tsv"
   ),
@@ -684,33 +925,42 @@ write.table(
   row.names = FALSE
 )
 
+cat(
+  "\nFigure 2E finalizada.\n",
+  "PDF: ",
+  file.path(
+    figure_dir,
+    "Figure2E_fibroblast_states_pseudotime.pdf"
+  ),
+  "\nPNG: ",
+  file.path(
+    figure_dir,
+    "Figure2E_fibroblast_states_pseudotime.png"
+  ),
+  "\n",
+  sep = ""
+)
 
 # ============================================================
-# Figure 2F: graph_test
+# Figure 2F: dynamic genes along fibroblast pseudotime
+# Mesothelial cells are absent only after the complete trajectory
+# and pseudotime have already been calculated in cds_all.
 # ============================================================
 
-cat("\nEjecutando graph_test...\n")
+cat("\nEjecutando graph_test en fibroblastos...\n")
 
 modulated_genes <- graph_test(
-  cds,
+  cds_fibro,
   neighbor_graph = "principal_graph",
   cores = n_cores
 )
 
-graph_test_table <- as.data.frame(
-  modulated_genes
-)
-
-graph_test_table$Gene <- rownames(
-  graph_test_table
-)
+graph_test_table <- as.data.frame(modulated_genes)
+graph_test_table$Gene <- rownames(graph_test_table)
 
 write.table(
   graph_test_table,
-  file.path(
-    table_dir,
-    "Figure2F_graph_test_all.tsv"
-  ),
+  file.path(table_dir, "Figure2F_graph_test_all.tsv"),
   sep = "\t",
   quote = FALSE,
   row.names = FALSE
@@ -719,82 +969,184 @@ write.table(
 sig_genes <- graph_test_table[
   graph_test_table$status == "OK" &
     graph_test_table$q_value < 0.05 &
-    is.finite(
-      graph_test_table$morans_I
-    ),
+    is.finite(graph_test_table$morans_I),
   ,
   drop = FALSE
 ]
 
 sig_genes <- sig_genes[
-  order(
-    sig_genes$morans_I,
-    decreasing = TRUE
+  order(sig_genes$morans_I, decreasing = TRUE),
+  ,
+  drop = FALSE
+]
+
+if (nrow(sig_genes) == 0) {
+  stop("No se encontraron genes significativos en graph_test().")
+}
+
+# ============================================================
+# Select 60 genes for the pseudotime heatmap
+# Highest Moran's I genes plus mandatory manually selected genes
+# ============================================================
+
+manual_genes <- c(
+  "Axl",
+  "Pdgfra",
+  "Pdgfrb",
+  "Dcn",
+  "Pdpn",
+  "Notch3",
+  "Lipg",
+  "Per1",
+  "Col24a1",
+  "Macf1"
+)
+
+excluded_genes <- c(
+  "Mapkapk3",
+  "Dpep1",
+  "Mgp",
+  "Cfh",
+  "Spon2",
+  "Tgfbi",
+  "Txnip"
+)
+
+manual_genes <- unique(
+  setdiff(
+    manual_genes,
+    excluded_genes
+  )
+)
+
+missing_manual_genes <- setdiff(
+  manual_genes,
+  rownames(rowData(cds_fibro))
+)
+
+if (length(missing_manual_genes) > 0) {
+  stop(
+    "Estos genes manuales no están presentes en cds_fibro: ",
+    paste(missing_manual_genes, collapse = ", ")
+  )
+}
+
+final_gene_number <- 60L
+n_automatic_genes <- final_gene_number -
+  length(manual_genes)
+
+if (n_automatic_genes < 0) {
+  stop(
+    "La lista manual contiene más de ",
+    final_gene_number,
+    " genes."
+  )
+}
+
+automatic_candidates <- sig_genes[
+  !sig_genes$Gene %in% c(
+    manual_genes,
+    excluded_genes
   ),
   ,
   drop = FALSE
 ]
 
-top_genes <- head(
-  sig_genes,
-  60
+if (nrow(automatic_candidates) < n_automatic_genes) {
+  stop(
+    "No hay suficientes genes automáticos después de las exclusiones. ",
+    "Disponibles: ",
+    nrow(automatic_candidates),
+    "; necesarios: ",
+    n_automatic_genes,
+    "."
+  )
+}
+
+automatic_genes <- head(
+  automatic_candidates$Gene,
+  n_automatic_genes
+)
+
+valid_genes <- unique(
+  c(
+    automatic_genes,
+    manual_genes
+  )
 )
 
 valid_genes <- intersect(
-  top_genes$Gene,
-  rownames(
-    rowData(cds)
-  )
+  valid_genes,
+  rownames(rowData(cds_fibro))
 )
 
 valid_genes <- setdiff(
   valid_genes,
-  c(
-    "Mapkapk3",
-    "Dpep1"
-  )
+  excluded_genes
 )
 
+if (length(valid_genes) != final_gene_number) {
+  stop(
+    "La selección final contiene ",
+    length(valid_genes),
+    " genes en lugar de ",
+    final_gene_number,
+    "."
+  )
+}
+
+if (!all(manual_genes %in% valid_genes)) {
+  stop(
+    "No se conservaron todos los genes manuales en la selección final."
+  )
+}
+
+top_genes <- graph_test_table[
+  match(
+    valid_genes,
+    graph_test_table$Gene
+  ),
+  ,
+  drop = FALSE
+]
+
+top_genes$Gene <- valid_genes
+
+top_genes$Selection <- ifelse(
+  top_genes$Gene %in% manual_genes,
+  "Manual",
+  "Moran_I"
+)
+
+rownames(top_genes) <- top_genes$Gene
+
 cat(
-  "Genes seleccionados: ",
+  "\nGenes seleccionados para Figure 2F:\n",
+  "  Automáticos por Moran's I: ",
+  length(automatic_genes),
+  "\n  Incluidos manualmente: ",
+  length(manual_genes),
+  "\n  Total: ",
   length(valid_genes),
+  "\n  Genes manuales: ",
+  paste(manual_genes, collapse = ", "),
+  "\n  Genes excluidos: ",
+  paste(excluded_genes, collapse = ", "),
   "\n",
   sep = ""
 )
 
-# ============================================================
-# Expression ordered by pseudotime
-# ============================================================
-
-finite_cells <- names(
-  pseudotime_values
-)[
-  is.finite(
-    pseudotime_values
-  )
-]
-
+finite_cells <- names(pseudotime_fibro)[is.finite(pseudotime_fibro)]
 ordered_cells <- finite_cells[
-  order(
-    pseudotime_values[
-      finite_cells
-    ]
-  )
+  order(pseudotime_fibro[finite_cells])
 ]
+ordered_pseudotime <- pseudotime_fibro[ordered_cells]
 
-ordered_pseudotime <- pseudotime_values[
-  ordered_cells
-]
-
-pt_matrix <- exprs(cds)[
+pt_matrix <- exprs(cds_fibro)[
   valid_genes,
   ordered_cells,
   drop = FALSE
 ]
-
-# ============================================================
-# Smooth expression along ordered cell position
-# ============================================================
 
 cat("Aplicando smooth.spline(df = 3)...\n")
 
@@ -804,24 +1156,10 @@ pt_matrix <- t(
     1,
     function(x) {
       x <- as.numeric(x)
-
-      if (
-        length(unique(x)) < 2 ||
-          sd(x) == 0
-      ) {
-        return(
-          rep(
-            0,
-            length(x)
-          )
-        )
+      if (length(unique(x)) < 2 || sd(x) == 0) {
+        return(rep(0, length(x)))
       }
-
-      smooth.spline(
-        x = seq_along(x),
-        y = x,
-        df = 3
-      )$y
+      smooth.spline(x = seq_along(x), y = x, df = 3)$y
     }
   )
 )
@@ -829,65 +1167,29 @@ pt_matrix <- t(
 rownames(pt_matrix) <- valid_genes
 colnames(pt_matrix) <- ordered_cells
 
-# ============================================================
-# Row Z-score
-# ============================================================
-
 pt_matrix <- t(
   apply(
     pt_matrix,
     1,
     function(x) {
       current_sd <- sd(x)
-
-      if (
-        !is.finite(current_sd) ||
-          current_sd == 0
-      ) {
-        return(
-          rep(
-            0,
-            length(x)
-          )
-        )
+      if (!is.finite(current_sd) || current_sd == 0) {
+        return(rep(0, length(x)))
       }
-
-      (
-        x - mean(x)
-      ) / current_sd
+      (x - mean(x)) / current_sd
     }
   )
 )
 
-pt_matrix <- pt_matrix[
-  complete.cases(pt_matrix),
-  ,
-  drop = FALSE
-]
+pt_matrix <- pt_matrix[complete.cases(pt_matrix), , drop = FALSE]
 
-cat(
-  "Genes finales en el heatmap: ",
-  nrow(pt_matrix),
-  "\n",
-  sep = ""
-)
-
-# ============================================================
-# Heatmap colors and column annotations
-# ============================================================
+if (nrow(pt_matrix) < 3) {
+  stop("Hay menos de tres genes después del suavizado y escalado.")
+}
 
 expression_color <- colorRamp2(
-  seq(
-    -2,
-    2,
-    length.out = 11
-  ),
-  rev(
-    brewer.pal(
-      11,
-      "Spectral"
-    )
-  )
+  seq(-2, 2, length.out = 11),
+  rev(brewer.pal(11, "Spectral"))
 )
 
 group_colors <- c(
@@ -901,51 +1203,30 @@ sample_colors <- c(
   "CCR2KO" = "#08306B"
 )
 
-heatmap_metadata <- as.data.frame(
-  colData(cds)
-)[
+heatmap_metadata <- as.data.frame(colData(cds_fibro))[
   ordered_cells,
   ,
   drop = FALSE
 ]
 
 cell_clusters <- factor(
-  as.character(
-    heatmap_metadata$Clustering
-  ),
+  as.character(heatmap_metadata$Clustering),
   levels = fibro_states
 )
 
 cell_group <- factor(
-  as.character(
-    heatmap_metadata$group
-  ),
-  levels = c(
-    "Naive",
-    "Tumor"
-  )
+  as.character(heatmap_metadata$group),
+  levels = c("Naive", "Tumor")
 )
 
 cell_sample <- factor(
-  as.character(
-    heatmap_metadata$orig.ident
-  ),
-  levels = c(
-    "WT",
-    "CD169DTR",
-    "CCR2KO"
-  )
+  as.character(heatmap_metadata$orig.ident),
+  levels = c("WT", "CD169DTR", "CCR2KO")
 )
 
 pseudotime_color <- colorRamp2(
-  range(
-    ordered_pseudotime,
-    finite = TRUE
-  ),
-  c(
-    "#F7FCF5",
-    "#238B45"
-  )
+  c(0, 20),
+  c("#F7FCF5", "#238B45")
 )
 
 column_annotation <- HeatmapAnnotation(
@@ -961,233 +1242,96 @@ column_annotation <- HeatmapAnnotation(
   ),
   show_annotation_name = TRUE,
   annotation_name_side = "left",
-  simple_anno_size = unit(
-    4,
-    "mm"
-  )
-)
-# ============================================================
-# Hierarchical clustering and temporal module order
-# ============================================================
-
-calculate_activation_center <- function(
-  expression,
-  pseudotime
-) {
-  weights <- expression - min(
-    expression,
-    na.rm = TRUE
-  )
-
-  if (sum(weights, na.rm = TRUE) == 0) {
-    return(
-      mean(
-        pseudotime,
-        na.rm = TRUE
-      )
+  annotation_legend_param = list(
+    Pseudotime = list(
+      at = seq(0, 20, by = 5)
     )
-  }
-
-  weighted.mean(
-    pseudotime,
-    weights,
-    na.rm = TRUE
-  )
-}
-
-gene_activation_center <- apply(
-  pt_matrix,
-  1,
-  calculate_activation_center,
-  pseudotime = ordered_pseudotime
+  ),
+  simple_anno_size = unit(4, "mm")
 )
+# ============================================================
+# Hierarchical clustering of genes
+# Ward.D2 dendrogram with manual branch orientation
+# ============================================================
 
-# Clustering jerárquico global para definir tres módulos
 row_hc <- hclust(
   dist(pt_matrix),
   method = "ward.D2"
 )
 
-row_clusters <- cutree(
-  row_hc,
-  k = 3
+row_dend <- as.dendrogram(
+  row_hc
 )
 
-# Centro temporal de cada módulo
-cluster_activation_center <- tapply(
-  gene_activation_center,
-  row_clusters,
-  median,
-  na.rm = TRUE
-)
+# ------------------------------------------------------------
+# Function to exchange the two immediate branches
+# ------------------------------------------------------------
 
-# Módulos ordenados naturalmente:
-# menor pseudotime -> mayor pseudotime
-temporal_cluster_order <- names(
-  sort(
-    cluster_activation_center,
-    decreasing = FALSE
-  )
-)
+swap_dendrogram_children <- function(dend) {
 
-cluster_to_phase <- setNames(
-  c(
-    "Early",
-    "Intermediate",
-    "Late"
-  ),
-  temporal_cluster_order
-)
-
-gene_phase <- cluster_to_phase[
-  as.character(
-    row_clusters
-  )
-]
-
-names(gene_phase) <- names(
-  row_clusters
-)
-
-cat("\nAsignación temporal de módulos:\n")
-print(
-  data.frame(
-    Cluster = temporal_cluster_order,
-    Phase = c(
-      "Early",
-      "Intermediate",
-      "Late"
-    ),
-    Activation_center = cluster_activation_center[
-      temporal_cluster_order
-    ]
-  )
-)
-
-# ============================================================
-# Hierarchical order within each module
-# ============================================================
-
-get_hierarchical_order <- function(genes) {
-  if (length(genes) <= 1) {
-    return(genes)
+  if (!inherits(dend, "dendrogram")) {
+    stop("El objeto proporcionado no es un dendrograma.")
   }
 
-  module_hc <- hclust(
-    dist(
-      pt_matrix[
-        genes,
-        ,
-        drop = FALSE
-      ]
-    ),
-    method = "ward.D2"
-  )
+  if (
+    is.leaf(dend) ||
+      length(dend) != 2L
+  ) {
+    stop(
+      "La rama seleccionada no contiene exactamente dos subramas."
+    )
+  }
 
-  module_hc$labels[
-    module_hc$order
-  ]
+  first_branch <- dend[[1]]
+  second_branch <- dend[[2]]
+
+  dend[[1]] <- second_branch
+  dend[[2]] <- first_branch
+
+  dend
 }
 
-late_genes <- names(
-  gene_phase
-)[
-  gene_phase == "Late"
-]
+# ------------------------------------------------------------
+# Exchange only the two main clusters
+# ------------------------------------------------------------
 
-intermediate_genes <- names(
-  gene_phase
-)[
-  gene_phase == "Intermediate"
-]
-
-early_genes <- names(
-  gene_phase
-)[
-  gene_phase == "Early"
-]
-
-# Orden jerárquico dentro de cada módulo
-late_order <- get_hierarchical_order(
-  late_genes
+row_dend <- swap_dendrogram_children(
+  row_dend
 )
 
-intermediate_order <- get_hierarchical_order(
-  intermediate_genes
+# IMPORTANTE:
+# No intercambiamos row_dend[[1]], porque corresponde al
+# cluster superior, cuya orientación ya es correcta.
+#
+# Tampoco intercambiamos row_dend[[2]] aquí. Al eliminar el
+# intercambio que tenía el script anterior, sus dos subclusters
+# quedan invertidos respecto al heatmap actual.
+
+# ------------------------------------------------------------
+# Final visual gene order
+# ------------------------------------------------------------
+
+heatmap_gene_order <- labels(
+  row_dend
 )
 
-early_order <- get_hierarchical_order(
-  early_genes
+final_gene_order <- heatmap_gene_order
+
+cat(
+  "\nGenes incluidos en el clustering jerárquico: ",
+  length(final_gene_order),
+  "\n",
+  sep = ""
 )
-
-# Invertir solamente el módulo superior
-late_order <- rev(
-  late_order
-)
-
-# ============================================================
-# Final visual order
-# Top: Late
-# Middle: Intermediate
-# Bottom: Early
-# ============================================================
-
-final_gene_order <- c(
-  early_order,
-  intermediate_order,
-  late_order
-)
-
-# Reordenar físicamente la matriz
-pt_matrix_final <- pt_matrix[
-  final_gene_order,
-  ,
-  drop = FALSE
-]
-
-gene_phase_final <- gene_phase[
-  final_gene_order
-]
-
-row_clusters_final <- row_clusters[
-  final_gene_order
-]
-
-gene_activation_center_final <-
-  gene_activation_center[
-    final_gene_order
-  ]
-
-cat("\nOrden visual final:\n")
-
-print(
-  table(
-    factor(
-      gene_phase_final,
-      levels = c(
-        "Late",
-        "Intermediate",
-        "Early"
-      )
-    )
-  )
-)
-
-# ============================================================
-# Figure 2F heatmap
-# Hierarchical clustering used within modules
-# No spaces between modules
-# ============================================================
 
 Figure2F <- Heatmap(
-  pt_matrix_final,
+  pt_matrix,
   name = "Scaled Expression",
   col = expression_color,
 
-  # El orden jerárquico ya está incorporado
-  # físicamente en pt_matrix_final
-  cluster_rows = FALSE,
+  cluster_rows = row_dend,
   cluster_columns = FALSE,
+  show_row_dend = TRUE,
 
   show_row_names = TRUE,
   show_column_names = FALSE,
@@ -1208,17 +1352,13 @@ Figure2F <- Heatmap(
   raster_quality = 3
 )
 
-# ============================================================
-# Save Figure 2F
-# ============================================================
-
 pdf(
   file = file.path(
     figure_dir,
     "Figure2F_pseudotime_heatmap.pdf"
   ),
-  width = 13,
-  height = 8,
+  width = 14,
+  height = 8.5,
   useDingbats = FALSE
 )
 
@@ -1235,8 +1375,8 @@ png(
     figure_dir,
     "Figure2F_pseudotime_heatmap.png"
   ),
-  width = 3600,
-  height = 2200,
+  width = 4000,
+  height = 2400,
   res = 250
 )
 
@@ -1248,119 +1388,62 @@ draw(
 
 dev.off()
 
-# ============================================================
-# Figure 2F source tables
-# ============================================================
-
 selected_gene_table <- top_genes[
-  match(
-    final_gene_order,
-    top_genes$Gene
-  ),
+  match(heatmap_gene_order, top_genes$Gene),
   ,
   drop = FALSE
 ]
 
-selected_gene_table$Heatmap_cluster <- unname(
-  row_clusters_final[
-    selected_gene_table$Gene
-  ]
+selected_gene_table$Heatmap_order <- match(
+  selected_gene_table$Gene,
+  final_gene_order
 )
 
-selected_gene_table$Activation_center <- unname(
-  gene_activation_center_final[
-    selected_gene_table$Gene
-  ]
-)
-
-selected_gene_table$Temporal_phase <- unname(
-  gene_phase_final[
-    selected_gene_table$Gene
-  ]
-)
-
-selected_gene_table$Heatmap_order <- seq_len(
-  nrow(selected_gene_table)
-)
+selected_gene_table <- selected_gene_table[
+  order(selected_gene_table$Heatmap_order),
+  ,
+  drop = FALSE
+]
 
 write.table(
   selected_gene_table,
-  file = file.path(
-    table_dir,
-    "Figure2F_selected_genes.tsv"
-  ),
+  file.path(table_dir, "Figure2F_selected_genes.tsv"),
   sep = "\t",
   quote = FALSE,
   row.names = FALSE
 )
 
 scaled_expression_table <- data.frame(
-  Gene = rownames(
-    pt_matrix_final
-  ),
-  pt_matrix_final,
+  Gene = final_gene_order,
+  pt_matrix[final_gene_order, , drop = FALSE],
   check.names = FALSE
 )
 
 write.table(
   scaled_expression_table,
-  file = file.path(
-    table_dir,
-    "Figure2F_scaled_expression.tsv"
-  ),
+  file.path(table_dir, "Figure2F_scaled_expression.tsv"),
   sep = "\t",
   quote = FALSE,
   row.names = FALSE
 )
 
-capture.output(
-  sessionInfo(),
-  file = file.path(
-    table_dir,
-    "Figure2_sessionInfo.txt"
-  )
-)
-
 cat(
-  "\nFigure 2F finalizada.\n",
-  "Orden superior: Late, invertido internamente\n",
-  "Orden central: Intermediate\n",
-  "Orden inferior: Early\n",
-  "PDF: ",
-  file.path(
-    figure_dir,
-    "Figure2F_pseudotime_heatmap.pdf"
-  ),
-  "\nPNG: ",
-  file.path(
-    figure_dir,
-    "Figure2F_pseudotime_heatmap.png"
-  ),
+  "\nFigure 2F finalizada con clustering jerárquico Ward.D2.\n",
+  "PDF: ", file.path(figure_dir, "Figure2F_pseudotime_heatmap.pdf"),
+  "\nPNG: ", file.path(figure_dir, "Figure2F_pseudotime_heatmap.png"),
   "\n",
   sep = ""
 )
-
-
-
-
 
 # ============================================================
 # Figure 2G
 # Cytokines, collagens and ECM heatmaps
 # ============================================================
 
-figure2g_states <- c(
-  "Fibroblasts Universal",
-  "Fibroblasts Activated 1",
-  "Fibroblasts Activated 2",
-  "Mesothelial"
-)
-
-meta <- fibroblasts[[]]
+figure2g_states <- trajectory_states
 
 figure2g_cells <- rownames(meta)[
-  as.character(meta$Clustering.Mesenchymal) == "Mesenchymal" &
-    as.character(meta$Clustering) %in% figure2g_states
+  as.character(meta$Clustering) %in% figure2g_states
 ]
 
 fibro_meso <- subset(
@@ -1374,18 +1457,10 @@ fibro_meso$Clustering <- factor(
 )
 
 DefaultAssay(fibro_meso) <- "RNA"
-
-fibro_meso <- JoinLayers(
-  fibro_meso,
-  assay = "RNA"
-)
+fibro_meso <- JoinLayers(fibro_meso, assay = "RNA")
 
 cat("\nCélulas para los heatmaps de Figure 2G:\n")
-print(table(fibro_meso$Clustering))
-
-# ============================================================
-# Gene sets
-# ============================================================
+print(table(fibro_meso$Clustering, useNA = "ifany"))
 
 cytokine_genes <- c(
   "Ccl2", "Ccl3", "Ccl4", "Ccl5", "Ccl7", "Ccl8", "Ccl11",
@@ -1393,10 +1468,8 @@ cytokine_genes <- c(
   "Cxcl1", "Cxcl2", "Cxcl3", "Cxcl5", "Cxcl9", "Cxcl10",
   "Cxcl11", "Cxcl12", "Cxcl13", "Cxcl14", "Cxcl16",
   "Il1a", "Il1b", "Il6", "Il7", "Il11", "Il15", "Il18",
-  "Il33", "Il34",
-  "Tnf", "Tnfsf10", "Tnfsf11", "Tnfsf12", "Tnfsf13b",
-  "Tnfsf14", "Lta",
-  "Tgfb1", "Tgfb2", "Tgfb3",
+  "Il33", "Il34", "Tnf", "Tnfsf10", "Tnfsf11", "Tnfsf12",
+  "Tnfsf13b", "Tnfsf14", "Lta", "Tgfb1", "Tgfb2", "Tgfb3",
   "Lif", "Osm", "Csf1", "Csf2", "Csf3", "Kitl", "Flt3l",
   "Areg", "Ereg", "Gdf15", "Vegfa", "Ptgs2"
 )
@@ -1406,47 +1479,29 @@ collagen_genes <- c(
   "Col4a1", "Col4a2", "Col4a3", "Col4a4", "Col4a5", "Col4a6",
   "Col5a1", "Col5a2", "Col5a3",
   "Col6a1", "Col6a2", "Col6a3", "Col6a4", "Col6a5", "Col6a6",
-  "Col7a1", "Col8a1", "Col8a2",
-  "Col9a1", "Col9a2", "Col9a3",
-  "Col10a1", "Col11a1", "Col11a2",
-  "Col12a1", "Col13a1", "Col14a1", "Col15a1", "Col16a1",
-  "Col17a1", "Col18a1", "Col19a1", "Col20a1", "Col21a1",
-  "Col22a1", "Col23a1", "Col24a1", "Col25a1", "Col26a1",
-  "Col27a1", "Col28a1"
+  "Col7a1", "Col8a1", "Col8a2", "Col9a1", "Col9a2", "Col9a3",
+  "Col10a1", "Col11a1", "Col11a2", "Col12a1", "Col13a1",
+  "Col14a1", "Col15a1", "Col16a1", "Col17a1", "Col18a1",
+  "Col19a1", "Col20a1", "Col21a1", "Col22a1", "Col23a1",
+  "Col24a1", "Col25a1", "Col26a1", "Col27a1", "Col28a1"
 )
 
 ecm_genes <- c(
   "Fn1", "Fbn1", "Fbn2", "Postn", "Tnc", "Thbs1", "Thbs2",
   "Sparc", "Sparcl1", "Vtn", "Nid1", "Nid2", "Emilin1", "Emilin2",
   "Mfap2", "Mfap4", "Mfap5", "Eln", "Efemp1", "Efemp2",
-  "Fbln1", "Fbln2", "Fbln5", "Fbln7",
-  "Dcn", "Lum", "Bgn", "Fmod", "Aspn", "Ogn", "Prelp",
-  "Hspg2", "Sdc1", "Sdc2", "Sdc3", "Sdc4",
-  "Gpc1", "Gpc3", "Gpc4", "Gpc6",
-  "Ccn1", "Ccn2", "Ccn3", "Ccn4", "Ccn5",
-  "Lox", "Loxl1", "Loxl2", "Loxl3", "Loxl4",
-  "Serpine1", "Serpinh1", "Pcolce", "Pcolce2",
-  "Plod1", "Plod2", "Plod3",
-  "P4ha1", "P4ha2", "P4ha3",
-  "Timp1", "Timp2", "Timp3", "Timp4",
-  "Acta2", "Tagln", "Myl9", "Myh11", "Cnn1"
+  "Fbln1", "Fbln2", "Fbln5", "Fbln7", "Dcn", "Lum", "Bgn",
+  "Fmod", "Aspn", "Ogn", "Prelp", "Hspg2", "Sdc1", "Sdc2",
+  "Sdc3", "Sdc4", "Gpc1", "Gpc3", "Gpc4", "Gpc6", "Ccn1",
+  "Ccn2", "Ccn3", "Ccn4", "Ccn5", "Lox", "Loxl1", "Loxl2",
+  "Loxl3", "Loxl4", "Serpine1", "Serpinh1", "Pcolce", "Pcolce2",
+  "Plod1", "Plod2", "Plod3", "P4ha1", "P4ha2", "P4ha3",
+  "Timp1", "Timp2", "Timp3", "Timp4", "Acta2", "Tagln", "Myl9",
+  "Myh11", "Cnn1"
 )
 
-# ============================================================
-# Heatmap function
-# ============================================================
-
-make_figure2g_heatmap <- function(
-  object,
-  genes,
-  title,
-  filename
-) {
-  genes <- intersect(
-    genes,
-    rownames(object)
-  )
-
+make_figure2g_heatmap <- function(object, genes, title, filename) {
+  genes <- intersect(genes, rownames(object))
   if (length(genes) == 0) {
     stop("No hay genes presentes para: ", title)
   }
@@ -1463,61 +1518,19 @@ make_figure2g_heatmap <- function(
   avg_mat <- as.matrix(avg_mat)
   storage.mode(avg_mat) <- "double"
 
-  # Ordenar los estados
   state_keys <- make.names(figure2g_states)
   column_keys <- make.names(colnames(avg_mat))
-
-  column_index <- match(
-    state_keys,
-    column_keys
-  )
-
+  column_index <- match(state_keys, column_keys)
   keep_states <- !is.na(column_index)
 
-  avg_mat <- avg_mat[
-    ,
-    column_index[keep_states],
-    drop = FALSE
-  ]
+  avg_mat <- avg_mat[, column_index[keep_states], drop = FALSE]
+  colnames(avg_mat) <- figure2g_states[keep_states]
+  avg_mat <- avg_mat[rowSums(avg_mat > 0, na.rm = TRUE) > 0, , drop = FALSE]
 
-  colnames(avg_mat) <- figure2g_states[
-    keep_states
-  ]
-
-  # Eliminar genes sin expresión
-  avg_mat <- avg_mat[
-    rowSums(avg_mat > 0, na.rm = TRUE) > 0,
-    ,
-    drop = FALSE
-  ]
-
-  # Z-score por gen
-  row_mean <- rowMeans(
-    avg_mat,
-    na.rm = TRUE
-  )
-
-  row_sd <- apply(
-    avg_mat,
-    1,
-    sd,
-    na.rm = TRUE
-  )
-
-  z_mat <- sweep(
-    avg_mat,
-    1,
-    row_mean,
-    "-"
-  )
-
-  z_mat <- sweep(
-    z_mat,
-    1,
-    row_sd,
-    "/"
-  )
-
+  row_mean <- rowMeans(avg_mat, na.rm = TRUE)
+  row_sd <- apply(avg_mat, 1, sd, na.rm = TRUE)
+  z_mat <- sweep(avg_mat, 1, row_mean, "-")
+  z_mat <- sweep(z_mat, 1, row_sd, "/")
   z_mat[!is.finite(z_mat)] <- 0
   z_mat[z_mat > 2.5] <- 2.5
   z_mat[z_mat < -2.5] <- -2.5
@@ -1532,106 +1545,70 @@ make_figure2g_heatmap <- function(
     fontsize_row = 10,
     fontsize_col = 8,
     angle_col = 45,
-    color = colorRampPalette(
-      c(
-        "navy",
-        "white",
-        "firebrick3"
-      )
-    )(100),
-    breaks = seq(
-      -2.5,
-      2.5,
-      length.out = 101
-    ),
+    color = colorRampPalette(c("navy", "white", "firebrick3"))(100),
+    breaks = seq(-2.5, 2.5, length.out = 101),
     main = title,
     silent = TRUE
   )
 
-  plot_width <- max(
-    14,
-    ncol(heatmap_matrix) * 0.32
-  )
+  plot_width <- max(14, ncol(heatmap_matrix) * 0.32)
 
-  # PDF
   pdf(
-    file.path(
-      figure_dir,
-      paste0(filename, ".pdf")
-    ),
+    file.path(figure_dir, paste0(filename, ".pdf")),
     width = plot_width,
     height = 4.5,
     useDingbats = FALSE
   )
-
   grid::grid.newpage()
   grid::grid.draw(ph$gtable)
   dev.off()
 
-  # PNG
   png(
-    file.path(
-      figure_dir,
-      paste0(filename, ".png")
-    ),
+    file.path(figure_dir, paste0(filename, ".png")),
     width = plot_width,
     height = 4.5,
     units = "in",
     res = 300
   )
-
   grid::grid.newpage()
   grid::grid.draw(ph$gtable)
   dev.off()
 
-  # Source table
   write.table(
-    data.frame(
-      Gene = rownames(z_mat),
-      z_mat,
-      check.names = FALSE
-    ),
-    file.path(
-      table_dir,
-      paste0(filename, "_zscore.tsv")
-    ),
+    data.frame(Gene = rownames(z_mat), z_mat, check.names = FALSE),
+    file.path(table_dir, paste0(filename, "_zscore.tsv")),
     sep = "\t",
     quote = FALSE,
     row.names = FALSE
   )
 
-  cat(
-    title,
-    ": ",
-    nrow(z_mat),
-    " genes\n",
-    sep = ""
-  )
+  cat(title, ": ", nrow(z_mat), " genes\n", sep = "")
 }
 
-# ============================================================
-# Generate the three heatmaps
-# ============================================================
-
 make_figure2g_heatmap(
-  object = fibro_meso,
-  genes = cytokine_genes,
-  title = "Cytokines / chemokines",
-  filename = "Figure2G_cytokines_chemokines"
+  fibro_meso,
+  cytokine_genes,
+  "Cytokines / chemokines",
+  "Figure2G_cytokines_chemokines"
 )
 
 make_figure2g_heatmap(
-  object = fibro_meso,
-  genes = collagen_genes,
-  title = "Collagens",
-  filename = "Figure2G_collagens"
+  fibro_meso,
+  collagen_genes,
+  "Collagens",
+  "Figure2G_collagens"
 )
 
 make_figure2g_heatmap(
-  object = fibro_meso,
-  genes = ecm_genes,
-  title = "ECM / matrix-associated genes",
-  filename = "Figure2G_ECM"
+  fibro_meso,
+  ecm_genes,
+  "ECM / matrix-associated genes",
+  "Figure2G_ECM"
 )
 
-cat("\nFigure 2G finalizada.\n")
+capture.output(
+  sessionInfo(),
+  file = file.path(table_dir, "Figure2_sessionInfo.txt")
+)
+
+cat("\nFigure 2 finalizada.\n")
