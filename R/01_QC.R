@@ -328,3 +328,53 @@ fibroblasts@meta.data$Cell_type.Image <- gsub("Endothelial cells.*","Endothelial
 
 
 
+
+
+
+# ============================================================
+# Save final QC object
+# ============================================================
+
+qc_object_file <- file.path(
+  outdir,
+  "objects",
+  "fibroblasts.QC.rds"
+)
+
+# Basic integrity checks before saving
+stopifnot(
+  ncol(fibroblasts) == nrow(fibroblasts@meta.data),
+  identical(
+    colnames(fibroblasts),
+    rownames(fibroblasts@meta.data)
+  ),
+  "pca" %in% Reductions(fibroblasts),
+  "umap" %in% Reductions(fibroblasts),
+  "seurat_clusters" %in% colnames(fibroblasts@meta.data),
+  "Cell_type.Image" %in% colnames(fibroblasts@meta.data),
+  "Cell_type.Image.fine" %in% colnames(fibroblasts@meta.data)
+)
+
+saveRDS(
+  object = fibroblasts,
+  file = qc_object_file
+)
+
+if (!file.exists(qc_object_file)) {
+  stop(
+    "The final QC object could not be saved at: ",
+    qc_object_file
+  )
+}
+
+cat("\n========================================\n")
+cat("Final QC object saved successfully\n")
+cat("Path:", qc_object_file, "\n")
+cat("Cells:", ncol(fibroblasts), "\n")
+cat("Features:", nrow(fibroblasts), "\n")
+cat(
+  "File size:",
+  round(file.info(qc_object_file)$size / 1024^3, 2),
+  "GB\n"
+)
+cat("========================================\n")
