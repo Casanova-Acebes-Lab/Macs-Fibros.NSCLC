@@ -39,41 +39,25 @@ dir.create(
 )
 
 # ============================================================
-# Input files
+# Historical highly variable genes
 # ============================================================
 
 hvg_file <- file.path(
   datadir,
-  "signatures",
-  "fibroblasts_HVGs.rds"
+  "HVG",
+  "fibroblasts_historical_HVGs.rds"
 )
 
-pca_features_file <- file.path(
-  datadir,
-  "signatures",
-  "fibroblasts_PCA_features.rds"
-)
-
-umap_coordinates_file <- file.path(
-  datadir,
-  "signatures",
-  "fibroblasts_UMAP_coordinates.rds"
-)
+if (!file.exists(hvg_file)) {
+  stop("Historical HVG file not found: ", hvg_file)
+}
 
 hvg <- readRDS(hvg_file)
-pca_features <- readRDS(pca_features_file)
-umap_coordinates <- readRDS(umap_coordinates_file)
 
 stopifnot(
   is.character(hvg),
   length(hvg) == 2000,
-  is.character(pca_features),
-  length(pca_features) == 1801,
-  all(pca_features %in% hvg),
-  is.matrix(umap_coordinates),
-  nrow(umap_coordinates) == 51195,
-  ncol(umap_coordinates) == 2,
-  !anyDuplicated(rownames(umap_coordinates))
+  length(unique(hvg)) == 2000
 )
 
 # ============================================================
@@ -194,7 +178,7 @@ read_sample_remove_doublets <- function(
   doublets <- readRDS(
     file.path(
       datadir,
-      "doublets.barcodes",
+      "barcodes.doublets",
       condition,
       paste0("barcodes.", sample_id, ".rds")
     )
@@ -371,10 +355,14 @@ fibroblasts <- ScaleData(
 # ============================================================
 # PCA
 # ============================================================
+# PCA is recalculated from the historical set of 2,000 HVGs.
+# Seurat automatically excludes features that cannot be used
+# for PCA (for example, zero-variance features).
+# ============================================================
 
 fibroblasts <- RunPCA(
   object = fibroblasts,
-  features = pca_features,
+  features = hvg,
   npcs = 50,
   seed.use = 42,
   verbose = TRUE
@@ -387,9 +375,24 @@ pca_used <- rownames(
   )
 )
 
+cat(
+  "
+Historical HVGs supplied:",
+  length(hvg),
+  "
+"
+)
+
+cat(
+  "Features actually used by PCA:",
+  length(pca_used),
+  "
+"
+)
+
 stopifnot(
   length(pca_used) == 1801,
-  setequal(pca_used, pca_features)
+  all(pca_used %in% hvg)
 )
 
 # ============================================================
@@ -484,8 +487,8 @@ fibroblasts <- RunUMAP(
   min.dist = 0.3,
   spread = 1,
   seed.use = 42,
-  reduction.name = "umap_recomputed",
-  reduction.key = "UMAPR_",
+  reduction.name = "umap",
+  reduction.key = "UMAP_",
   verbose = TRUE
 )
 
@@ -532,9 +535,7 @@ fibroblasts@meta.data$Cell_type.Image <- gsub("Endothelial cells.*","Endothelial
 # Save final QC object
 # ============================================================
 
-qc_object_file <- file.path(
-  outdir,
-  "objects",
+qc_object_file <- file.path(rsdir, "objects",
   "fibroblasts.QC.rds"
 )
 

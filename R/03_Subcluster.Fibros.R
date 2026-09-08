@@ -40,7 +40,7 @@ dir.create(
 )
 
 dir.create(
-  file.path(outdir, "objects"),
+  file.path(rsdir, "objects"),
   recursive = TRUE,
   showWarnings = FALSE
 )
@@ -59,7 +59,7 @@ source("R/Functions.R")
 
 fibroblasts <- readRDS(
   file.path(
-    outdir,
+    rsdir,
     "objects",
     "fibroblasts.QC.rds"
   )
@@ -504,7 +504,7 @@ dev.off()
 saveRDS(
   fibros.CD45N,
   file.path(
-    outdir,
+    rsdir,
     "objects",
     "fibroblasts.Fibros.annotated.rds"
   )
@@ -513,7 +513,7 @@ saveRDS(
 cat(
   "\nObject saved in:\n",
   file.path(
-    outdir,
+    rsdir,
     "objects",
     "fibroblasts.Fibros.annotated.rds"
   ),

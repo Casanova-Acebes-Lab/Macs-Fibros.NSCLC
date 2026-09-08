@@ -45,9 +45,9 @@ outdir <- values["outdir"]
 # Output directories
 # ============================================================
 
-objects_dir <- file.path(outdir, "objects")
-annotations_dir <- file.path(outdir, "annotations")
-tables_dir <- file.path(outdir, "tables", "Macrophage_DC")
+objects_dir <- file.path(rsdir, "objects")
+annotations_dir <- file.path(rsdir, "annotations")
+tables_dir <- file.path(rsdir, "tables", "Macrophage_DC")
 diagnostics_dir <- file.path(outdir, "diagnostics", "Macrophage_DC")
 
 dir.create(objects_dir, recursive = TRUE, showWarnings = FALSE)
