@@ -779,6 +779,12 @@ gene_list_Figure1G <- c(
 
   "Acta2",
 
+  "Ces1d",
+
+  "Dcn",
+
+  "Wnt5a",
+
   "Bmp5",
 
   "Ddit4",
@@ -787,9 +793,13 @@ gene_list_Figure1G <- c(
 
   "Npr3",
 
+  "Npnt",
+
   "Pdpn",
 
-  "Upk3b"
+  "Upk3b",
+
+  "Wt1"
 
 )
 
@@ -1057,7 +1067,7 @@ filename = file.path(
 
 plot = Figure1G,
 
-width = 10,
+width = 11,
 
 height = 6,
 
