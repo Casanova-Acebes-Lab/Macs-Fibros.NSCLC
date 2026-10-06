@@ -7,8 +7,8 @@
 #   Rscript R/09_Figure2_select_root_static.R
 #
 # Then save one or more root nodes:
-#   Rscript R/09_Figure2_select_root_static.R Y_3
-#   Rscript R/09_Figure2_select_root_static.R Y_3,Y_17
+#   Rscript R/09_Figure2_select_root_static.R Y_103
+#   Rscript R/09_Figure2_select_root_static.R  Y_103 Y_87
 # ============================================================
 
 suppressPackageStartupMessages({
