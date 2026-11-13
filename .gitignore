@@ -88,3 +88,4 @@ data/raw/*
 !data/barcodes.doublets/
 !data/barcodes.doublets/*/
 !data/barcodes.doublets/*/*.rds
+R/PI_Review/

@@ -1041,9 +1041,16 @@ sep = ""
 # Three vertical heatmaps arranged in three columns.
 # The same number of genes is displayed in all panels.
 #
-# Cytokines and ECM / collagen:
+# Cytokines / chemokines / growth factors:
+#   all 22 explicitly named cytokines / growth factors from the manuscript
+#   text are forced into the heatmap. Two additional TNF/TNFSF-family genes
+#   are selected from Fibroblasts Activated 1 to represent the phrase
+#   "Tnfa-related family genes". The cytokine panel therefore contains
+#   24 genes in total.
+#
+# ECM / collagen:
 #   5 distinctive genes are selected for each fibroblast state,
-#   and the remaining 5 genes are filled by global differential ranking.
+#   and the remaining 9 positions are filled by global differential ranking.
 #
 # Metabolism:
 #   genes are ranked specifically by differential expression
@@ -1063,7 +1070,7 @@ print(table(fibro_only$Clustering, useNA = "ifany"))
 # ============================================================
 # Same number of genes in every heatmap
 # ============================================================
-figure2g_n_genes <- 20L
+figure2g_n_genes <- 24L
 # ============================================================
 # 1. Cytokines / chemokines
 # ============================================================
@@ -1078,6 +1085,50 @@ cytokine_genes <- c(
   "Lif", "Osm", "Csf1", "Csf2", "Csf3", "Kitl", "Flt3l",
   "Areg", "Ereg", "Gdf15", "Vegfa", "Vegfb", "Pdgfa", "Pdgfb",
   "Fgf2", "Ptgs2"
+)
+
+# Genes explicitly named in the manuscript text.
+#
+# The first block corresponds to the first sentence of the supplied text;
+# the second block to Activated fibroblast 1; the third block to
+# Activated fibroblast 2.
+manuscript_cytokine_genes <- c(
+  "Cxcl9", "Cxcl10", "Cxcl5", "Cxcl12",
+  "Csf1", "Il34", "Vegfa", "Tgfb1", "Tgfb2",
+  "Osm", "Ccl5",
+  "Ccl19", "Il15",
+  "Cxcl16", "Cxcl13", "Ccl2", "Cxcl1", "Cxcl2", "Ccl3",
+  "Il7", "Il11", "Il33"
+)
+
+manuscript_cytokine_groups <- c(
+  "Cxcl9" = "Manuscript first block",
+  "Cxcl10" = "Manuscript first block",
+  "Cxcl5" = "Manuscript first block",
+  "Cxcl12" = "Manuscript first block",
+  "Csf1" = "Manuscript first block",
+  "Il34" = "Manuscript first block",
+  "Vegfa" = "Manuscript first block",
+  "Tgfb1" = "Manuscript first block",
+  "Tgfb2" = "Manuscript first block",
+  "Osm" = "Activated fibroblast 1",
+  "Ccl5" = "Activated fibroblast 1",
+  "Ccl19" = "Activated fibroblast 2",
+  "Il15" = "Activated fibroblast 2",
+  "Cxcl16" = "Activated fibroblast 2",
+  "Cxcl13" = "Activated fibroblast 2",
+  "Ccl2" = "Activated fibroblast 2",
+  "Cxcl1" = "Activated fibroblast 2",
+  "Cxcl2" = "Activated fibroblast 2",
+  "Ccl3" = "Activated fibroblast 2",
+  "Il7" = "Activated fibroblast 2",
+  "Il11" = "Activated fibroblast 2",
+  "Il33" = "Activated fibroblast 2"
+)
+
+activated1_tnf_family_candidates <- c(
+  "Tnf", "Tnfsf10", "Tnfsf11", "Tnfsf12",
+  "Tnfsf13b", "Tnfsf14", "Lta"
 )
 # ============================================================
 # 2. ECM / matrix-associated genes
@@ -1160,6 +1211,19 @@ metabolic_genes <- unique(c(
 cytokine_present <- intersect(cytokine_genes, rownames(fibro_only))
 ecm_present <- intersect(ecm_collagen_genes, rownames(fibro_only))
 metabolic_present <- intersect(metabolic_genes, rownames(fibro_only))
+
+missing_manuscript_cytokines <- setdiff(
+  manuscript_cytokine_genes,
+  cytokine_present
+)
+
+if (length(missing_manuscript_cytokines) > 0) {
+  stop(
+    "Figure 2G: estos genes citados explícitamente en el manuscrito ",
+    "no están disponibles en el objeto y no pueden omitirse silenciosamente: ",
+    paste(missing_manuscript_cytokines, collapse = ", ")
+  )
+}
 if (length(cytokine_present) < figure2g_n_genes) {
   stop("Figure 2G: no hay suficientes genes de cytokines presentes.")
 }
@@ -1299,10 +1363,198 @@ stringsAsFactors = FALSE
     )
 }
 # ============================================================
+# Select cytokines required by the manuscript text
+# ============================================================
+select_manuscript_cytokine_genes <- function(
+  genes,
+  markers,
+  avg_mat,
+  mandatory_genes,
+  tnf_family_candidates,
+  n_genes,
+  filename
+) {
+  variation <- get_expression_variation(avg_mat, genes)
+
+  missing_from_variation <- setdiff(
+    mandatory_genes,
+    variation$gene
+  )
+
+  if (length(missing_from_variation) > 0) {
+    stop(
+      "Figure 2G cytokines: estos genes del manuscrito no tienen ",
+      "expresión/variación suficiente para calcular el heatmap: ",
+      paste(missing_from_variation, collapse = ", ")
+    )
+  }
+
+  marker_table <- markers %>%
+    filter(
+      gene %in% genes,
+      cluster %in% figure2g_states,
+      !is.na(gene),
+      gene != "",
+      !is.na(avg_log2FC)
+    ) %>%
+    inner_join(
+      variation,
+      by = "gene"
+    )
+
+  n_tnf_needed <- n_genes - length(mandatory_genes)
+
+  if (n_tnf_needed != 2L) {
+    stop(
+      "Figure 2G cytokines: se esperaban exactamente 2 genes TNF/TNFSF ",
+      "adicionales, pero n_genes - mandatory_genes = ",
+      n_tnf_needed,
+      "."
+    )
+  }
+
+  activated1_tnf <- marker_table %>%
+    filter(
+      cluster == "Fibroblasts Activated 1",
+      gene %in% tnf_family_candidates,
+      avg_log2FC > 0
+    ) %>%
+    distinct(
+      gene,
+      .keep_all = TRUE
+    ) %>%
+    arrange(
+      desc(avg_log2FC),
+      desc(expression_range),
+      p_val_adj,
+      gene
+    )
+
+  if (nrow(activated1_tnf) < n_tnf_needed) {
+    stop(
+      "Figure 2G cytokines: solo hay ",
+      nrow(activated1_tnf),
+      " genes TNF/TNFSF positivos en Fibroblasts Activated 1; ",
+      "se necesitan ",
+      n_tnf_needed,
+      ". Candidatos evaluados: ",
+      paste(
+        tnf_family_candidates,
+        collapse = ", "
+      )
+    )
+  }
+
+  activated1_tnf_selected <- activated1_tnf$gene[
+    seq_len(n_tnf_needed)
+  ]
+
+  selected <- c(
+    mandatory_genes,
+    activated1_tnf_selected
+  )
+
+  if (
+    length(selected) != n_genes ||
+      anyDuplicated(selected)
+  ) {
+    stop(
+      "Figure 2G cytokines: la selección final contiene ",
+      length(selected),
+      " genes únicos en lugar de ",
+      n_genes,
+      "."
+    )
+  }
+
+  selected_table <- data.frame(
+    Gene = selected,
+    Manuscript_block = c(
+      unname(
+        manuscript_cytokine_groups[mandatory_genes]
+      ),
+      rep(
+        "Activated fibroblast 1 - TNF/TNFSF family",
+        length(activated1_tnf_selected)
+      )
+    ),
+    Selection_reason = c(
+      rep(
+        "Explicitly named in manuscript text",
+        length(mandatory_genes)
+      ),
+      rep(
+        "Top positive Activated 1 TNF/TNFSF marker",
+        length(activated1_tnf_selected)
+      )
+    ),
+    stringsAsFactors = FALSE
+  )
+
+  selected_marker_summary <- marker_table %>%
+    filter(gene %in% selected) %>%
+    group_by(gene) %>%
+    slice_max(
+      order_by = abs(avg_log2FC),
+      n = 1,
+      with_ties = FALSE
+    ) %>%
+    ungroup() %>%
+    select(
+      gene,
+      cluster,
+      avg_log2FC,
+      p_val_adj,
+      mean_expression,
+      expression_sd,
+      expression_range
+    )
+
+  selected_table <- selected_table %>%
+    left_join(
+      selected_marker_summary,
+      by = c("Gene" = "gene")
+    )
+
+  write.table(
+    selected_table,
+    file.path(
+      table_dir,
+      paste0(
+        filename,
+        "_manuscript_genes.tsv"
+      )
+    ),
+    sep = "\t",
+    quote = FALSE,
+    row.names = FALSE
+  )
+
+  cat(
+    "\nCytokines / chemokines / growth factors seleccionadas para Figure 2G:\n",
+    "  Genes explícitos del texto: ",
+    length(mandatory_genes),
+    "\n",
+    "  Genes TNF/TNFSF Activated 1 añadidos: ",
+    paste(
+      activated1_tnf_selected,
+      collapse = ", "
+    ),
+    "\n",
+    "  Total: ",
+    length(selected),
+    "\n",
+    sep = ""
+  )
+
+  selected
+}
+
+# ============================================================
 # Select cytokines with representation from all fibroblast states
 #
 # Five positive one-vs-rest markers are reserved for each fibroblast state.
-# The remaining five positions are filled with the strongest
+# The remaining positions are filled with the strongest
 # remaining genes from the corresponding candidate set.
 # ============================================================
 select_balanced_state_genes <- function(
@@ -1478,14 +1730,14 @@ row.names = FALSE
 # ============================================================
 # Select exactly the same number of genes for all three panels
 # ============================================================
-cytokine_genes_selected <- select_balanced_state_genes(
+cytokine_genes_selected <- select_manuscript_cytokine_genes(
   genes = cytokine_present,
   markers = markers_allstates,
   avg_mat = figure2g_avg_all,
+  mandatory_genes = manuscript_cytokine_genes,
+  tnf_family_candidates = activated1_tnf_family_candidates,
   n_genes = figure2g_n_genes,
-  n_per_state = 5L,
-  filename = "Figure2G_cytokines_chemokines",
-  panel_label = "Cytokines / chemokines"
+  filename = "Figure2G_cytokines_chemokines"
 )
 ecm_genes_selected <- select_balanced_state_genes(
   genes = ecm_present,
@@ -1519,151 +1771,403 @@ figure2g_padding <- grid::unit(c(7, 8, 10, 18), "mm")
 # Build one vertical heatmap
 # ============================================================
 make_figure2g_heatmap <- function(
-avg_mat,
-genes,
-title,
-heatmap_name,
-filename
+  avg_mat,
+  genes,
+  title,
+  heatmap_name,
+  filename
 ) {
-  panel_avg <- avg_mat[ genes, figure2g_states, drop = FALSE ]
-  row_sd <- apply(panel_avg, 1, sd, na.rm = TRUE)
-  bad_genes <- rownames(panel_avg)[ !is.finite(row_sd) | row_sd <= 1e-8 ]
+  # Average expression matrix: genes x fibroblast states
+  panel_avg <- avg_mat[
+    genes,
+    figure2g_states,
+    drop = FALSE
+  ]
+
+  # Gene-wise Z-score across the three fibroblast states.
+  # This is calculated before transposing, so scaling remains
+  # identical to the previous vertical version.
+  gene_sd <- apply(
+    panel_avg,
+    1,
+    sd,
+    na.rm = TRUE
+  )
+
+  bad_genes <- rownames(panel_avg)[
+    !is.finite(gene_sd) |
+      gene_sd <= 1e-8
+  ]
+
   if (length(bad_genes) > 0) {
-    stop( "Figure 2G: genes sin variación entre estados: ", paste(bad_genes, collapse = ", ") )
+    stop(
+      "Figure 2G: genes sin variación entre estados: ",
+      paste(
+        bad_genes,
+        collapse = ", "
+      )
+    )
   }
-  row_mean <- rowMeans(panel_avg, na.rm = TRUE)
-  z_mat <- sweep(panel_avg, 1, row_mean, "-")
-  z_mat <- sweep(z_mat, 1, row_sd, "/")
-  if (any(!is.finite(z_mat))) {
-    stop( "Figure 2G: se generaron Z-scores no finitos en ", title, "." )
+
+  gene_mean <- rowMeans(
+    panel_avg,
+    na.rm = TRUE
+  )
+
+  z_gene_state <- sweep(
+    panel_avg,
+    1,
+    gene_mean,
+    "-"
+  )
+
+  z_gene_state <- sweep(
+    z_gene_state,
+    1,
+    gene_sd,
+    "/"
+  )
+
+  if (any(!is.finite(z_gene_state))) {
+    stop(
+      "Figure 2G: se generaron Z-scores no finitos en ",
+      title,
+      "."
+    )
   }
-  z_mat[z_mat > 2.5] <- 2.5
-  z_mat[z_mat < -2.5] <- -2.5
-  row_hc <- hclust(dist(z_mat), method = "complete")
-  gene_name_gp <- grid::gpar( fontsize = 11, fontface = "italic" )
-  gene_name_width <- ComplexHeatmap::max_text_width( rownames(z_mat), gp = gene_name_gp ) + grid::unit(4, "mm")
+
+  z_gene_state[z_gene_state > 2.5] <- 2.5
+  z_gene_state[z_gene_state < -2.5] <- -2.5
+
+  # Cluster genes exactly as before, but display them as columns.
+  gene_hc <- hclust(
+    dist(z_gene_state),
+    method = "complete"
+  )
+
+  # Horizontal orientation:
+  # rows    = fibroblast states
+  # columns = genes
+  z_horizontal <- t(z_gene_state)
+
+  gene_name_gp <- grid::gpar(
+    fontsize = 10,
+    fontface = "italic"
+  )
+
   Figure2G <- ComplexHeatmap::Heatmap(
-    z_mat,
-name = heatmap_name,
-col = figure2g_zscore_colors,
-show_heatmap_legend = FALSE,
-cluster_rows = row_hc,
-cluster_columns = FALSE,
-show_row_dend = TRUE,
-show_column_dend = FALSE,
-show_row_names = TRUE,
-show_column_names = TRUE,
-row_names_side = "left",
-row_names_gp = gene_name_gp,
-row_names_max_width = gene_name_width,
-column_names_side = "bottom",
-column_names_rot = 45,
-column_names_gp = grid::gpar(fontsize = 11),
-row_title = title,
-row_title_side = "left",
-row_title_rot = 90,
-row_title_gp = grid::gpar( fontsize = 13, fontface = "bold" ),
-border = FALSE,
-use_raster = FALSE
+    z_horizontal,
+    name = heatmap_name,
+    col = figure2g_zscore_colors,
+    show_heatmap_legend = FALSE,
+
+    # Fibroblast states remain in the biological order already
+    # defined in figure2g_states.
+    cluster_rows = FALSE,
+    show_row_dend = FALSE,
+
+    # Preserve gene clustering, now along the horizontal axis.
+    cluster_columns = gene_hc,
+    show_column_dend = TRUE,
+
+    show_row_names = TRUE,
+    show_column_names = TRUE,
+
+    row_names_side = "left",
+    row_names_gp = grid::gpar(
+      fontsize = 11
+    ),
+
+    column_names_side = "bottom",
+    column_names_rot = 45,
+    column_names_gp = gene_name_gp,
+
+    column_title = title,
+    column_title_side = "top",
+    column_title_gp = grid::gpar(
+      fontsize = 13,
+      fontface = "bold"
+    ),
+
+    border = FALSE,
+    use_raster = FALSE
   )
-  pdf( file = file.path( figure_dir, paste0(filename, ".pdf") ), width = 4.4, height = 7.0, useDingbats = FALSE )
+
+  # Individual horizontal heatmaps.
+  pdf(
+    file = file.path(
+      figure_dir,
+      paste0(
+        filename,
+        ".pdf"
+      )
+    ),
+    width = 10.5,
+    height = 3.6,
+    useDingbats = FALSE
+  )
+
   ComplexHeatmap::draw(
     Figure2G,
-heatmap_legend_list = list(figure2g_legend),
-heatmap_legend_side = "right",
-padding = figure2g_padding
+    heatmap_legend_list = list(
+      figure2g_legend
+    ),
+    heatmap_legend_side = "right",
+    padding = grid::unit(
+      c(
+        8,
+        8,
+        18,
+        14
+      ),
+      "mm"
+    )
   )
+
   dev.off()
+
   png(
-filename = file.path( figure_dir, paste0(filename, ".png") ),
-width = 4.4,
-height = 7.0,
-units = "in",
-res = 300
+    filename = file.path(
+      figure_dir,
+      paste0(
+        filename,
+        ".png"
+      )
+    ),
+    width = 10.5,
+    height = 3.6,
+    units = "in",
+    res = 300
   )
+
   ComplexHeatmap::draw(
     Figure2G,
-heatmap_legend_list = list(figure2g_legend),
-heatmap_legend_side = "right",
-padding = figure2g_padding
+    heatmap_legend_list = list(
+      figure2g_legend
+    ),
+    heatmap_legend_side = "right",
+    padding = grid::unit(
+      c(
+        8,
+        8,
+        18,
+        14
+      ),
+      "mm"
+    )
   )
+
   dev.off()
+
+  # Keep the exported table in the intuitive format
+  # genes x fibroblast states, even though the plot is transposed.
   write.table(
-    data.frame( Gene = rownames(z_mat), z_mat, check.names = FALSE ),
-    file.path( table_dir, paste0(filename, "_zscore.tsv") ),
-sep = "\t",
-quote = FALSE,
-row.names = FALSE
+    data.frame(
+      Gene = rownames(z_gene_state),
+      z_gene_state,
+      check.names = FALSE
+    ),
+    file.path(
+      table_dir,
+      paste0(
+        filename,
+        "_zscore.tsv"
+      )
+    ),
+    sep = "\t",
+    quote = FALSE,
+    row.names = FALSE
   )
-  cat( title, ": ", nrow(z_mat), " genes\n", sep = "" )
+
+  cat(
+    title,
+    ": ",
+    nrow(z_gene_state),
+    " genes\n",
+    sep = ""
+  )
+
   Figure2G
 }
+
 # ============================================================
-# Generate the three vertical Figure 2G heatmaps
+# Generate the three HORIZONTAL Figure 2G heatmaps
 # ============================================================
+
 Figure2G_cytokines <- make_figure2g_heatmap(
-avg_mat = figure2g_avg_all,
-genes = cytokine_genes_selected,
-title = "Cytokines / chemokines",
-heatmap_name = "Figure2G_cytokines",
-filename = "Figure2G_cytokines_chemokines"
+  avg_mat = figure2g_avg_all,
+  genes = cytokine_genes_selected,
+  title = "Cytokines / chemokines / growth factors",
+  heatmap_name = "Figure2G_cytokines",
+  filename = "Figure2G_cytokines_chemokines"
 )
+
 Figure2G_ECM_collagen <- make_figure2g_heatmap(
-avg_mat = figure2g_avg_all,
-genes = ecm_genes_selected,
-title = "ECM / collagen",
-heatmap_name = "Figure2G_ECM_collagen",
-filename = "Figure2G_ECM_collagen"
+  avg_mat = figure2g_avg_all,
+  genes = ecm_genes_selected,
+  title = "ECM / collagen",
+  heatmap_name = "Figure2G_ECM_collagen",
+  filename = "Figure2G_ECM_collagen"
 )
+
 Figure2G_metabolic <- make_figure2g_heatmap(
-avg_mat = figure2g_avg_all,
-genes = metabolic_genes_selected,
-title = "Metabolism",
-heatmap_name = "Figure2G_metabolism",
-filename = "Figure2G_metabolism"
+  avg_mat = figure2g_avg_all,
+  genes = metabolic_genes_selected,
+  title = "Metabolism",
+  heatmap_name = "Figure2G_metabolism",
+  filename = "Figure2G_metabolism"
 )
+
 # ============================================================
 # Combined Figure 2G battery
-# THREE vertical heatmaps arranged in THREE COLUMNS
+#
+# The individual heatmaps are horizontal, so the combined figure
+# is arranged in THREE ROWS to keep the gene labels readable.
+#
+# Each heatmap is drawn independently inside its own viewport so
+# that the three different gene sets retain their own clustering.
+# A single common Z-score legend is drawn on the right.
 # ============================================================
-Figure2G_combined <-
-  Figure2G_cytokines +
-  Figure2G_ECM_collagen +
-  Figure2G_metabolic
-pdf(
-file = file.path( figure_dir, "Figure2G_combined_3columns.pdf" ),
-width = 14.0,
-height = 7.4,
-useDingbats = FALSE
+
+draw_figure2g_combined <- function(
+  filename,
+  device = c(
+    "pdf",
+    "png"
+  )
+) {
+  device <- match.arg(device)
+
+  if (device == "pdf") {
+    pdf(
+      file = file.path(
+        figure_dir,
+        filename
+      ),
+      width = 11.5,
+      height = 10.5,
+      useDingbats = FALSE
+    )
+  } else {
+    png(
+      filename = file.path(
+        figure_dir,
+        filename
+      ),
+      width = 11.5,
+      height = 10.5,
+      units = "in",
+      res = 300
+    )
+  }
+
+  grid::grid.newpage()
+
+  outer_layout <- grid::grid.layout(
+    nrow = 3,
+    ncol = 2,
+    heights = grid::unit(
+      c(
+        1,
+        1,
+        1
+      ),
+      "null"
+    ),
+    widths = grid::unit.c(
+      grid::unit(
+        1,
+        "null"
+      ),
+      grid::unit(
+        18,
+        "mm"
+      )
+    )
+  )
+
+  grid::pushViewport(
+    grid::viewport(
+      layout = outer_layout
+    )
+  )
+
+  heatmap_list <- list(
+    Figure2G_cytokines,
+    Figure2G_ECM_collagen,
+    Figure2G_metabolic
+  )
+
+  for (i in seq_along(heatmap_list)) {
+    grid::pushViewport(
+      grid::viewport(
+        layout.pos.row = i,
+        layout.pos.col = 1
+      )
+    )
+
+    ComplexHeatmap::draw(
+      heatmap_list[[i]],
+      newpage = FALSE,
+      padding = grid::unit(
+        c(
+          5,
+          5,
+          14,
+          9
+        ),
+        "mm"
+      )
+    )
+
+    grid::upViewport()
+  }
+
+  # One common legend for all three heatmaps.
+  grid::pushViewport(
+    grid::viewport(
+      layout.pos.row = 1:3,
+      layout.pos.col = 2
+    )
+  )
+
+  grid::grid.draw(
+    ComplexHeatmap::packLegend(
+      figure2g_legend,
+      direction = "vertical"
+    )
+  )
+
+  grid::upViewport()
+  grid::upViewport()
+
+  dev.off()
+}
+
+draw_figure2g_combined(
+  filename = "Figure2G_combined_horizontal_3rows.pdf",
+  device = "pdf"
 )
-ComplexHeatmap::draw(
-  Figure2G_combined,
-heatmap_legend_list = list(figure2g_legend),
-heatmap_legend_side = "right",
-padding = grid::unit(c(8, 8, 8, 18), "mm")
+
+draw_figure2g_combined(
+  filename = "Figure2G_combined_horizontal_3rows.png",
+  device = "png"
 )
-dev.off()
-png(
-filename = file.path( figure_dir, "Figure2G_combined_3columns.png" ),
-width = 14.0,
-height = 7.4,
-units = "in",
-res = 300
-)
-ComplexHeatmap::draw(
-  Figure2G_combined,
-heatmap_legend_list = list(figure2g_legend),
-heatmap_legend_side = "right",
-padding = grid::unit(c(8, 8, 8, 18), "mm")
-)
-dev.off()
+
 cat(
-  "\nFigure 2G combinada guardada en:\n",
-  file.path( figure_dir, "Figure2G_combined_3columns.pdf" ),
+  "\nFigure 2G combinada horizontal guardada en:\n",
+  file.path(
+    figure_dir,
+    "Figure2G_combined_horizontal_3rows.pdf"
+  ),
   "\n",
-  file.path( figure_dir, "Figure2G_combined_3columns.png" ),
+  file.path(
+    figure_dir,
+    "Figure2G_combined_horizontal_3rows.png"
+  ),
   "\n",
-sep = ""
+  sep = ""
 )
+
 capture.output( sessionInfo(), file = file.path(table_dir, "Figure2_sessionInfo.txt") )
 cat("\nFigure 2 finalizada.\n")
