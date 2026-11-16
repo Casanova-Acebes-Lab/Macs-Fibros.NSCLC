@@ -1,4 +1,8 @@
-# Macs-Fibros.NSCLC
+git add .gitignore README.md data/Figure6/README.txt
+git status
+git commit -m "Remove H12O cohort table; add notice"
+git push --force origin main
+git push --force origin --tags# Macs-Fibros.NSCLC
 
 Reproducible single-cell RNA-seq analysis of the lung tumour microenvironment developed in the Casanova-Acebes Lab.
 

@@ -90,3 +90,4 @@ data/raw/*
 !data/barcodes.doublets/*/*.rds
 R/PI_Review/
 MANIFEST.txt
+data/Figure6/*.csv
